@@ -32,7 +32,7 @@ index 25463ca0..853f5e56 100644
          beta {
              manifestPlaceholders icon_name: 'icon_beta', fileproviderPath: 'AndorsTrail.beta2'
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..d2d1f975 100644
+index 1e190966..edebd63e 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
 @@ -2,8 +2,8 @@
@@ -41,8 +41,8 @@ index 1e190966..d2d1f975 100644
  	xmlns:android="http://schemas.android.com/apk/res/android" 
 -	android:versionCode="89"
 -	android:versionName="0.8.18"
-+	android:versionCode="93"
-+	android:versionName="0.8.18-duo9"
++	android:versionCode="94"
++	android:versionName="0.8.18-duo10"
  	android:installLocation="auto"
  	>
  
@@ -77,10 +77,10 @@ index 1e190966..d2d1f975 100644
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.css b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.css
 new file mode 100644
-index 00000000..77fcba7a
+index 00000000..41a372c3
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.css
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,366 @@
 +/*
 + * Andor's Trail language-combat skin.
 + *
@@ -296,6 +296,13 @@ index 00000000..77fcba7a
 +  display: none !important;
 +}
 +
++/* The native question strip mirrors only identified prompts and playback
++ * controls. Everything else stays in the authenticated Duolingo DOM. */
++html.andors-duo-exercise [data-andors-mirror="question"],
++html.andors-duo-exercise [data-andors-mirror="audio"] {
++  display: none !important;
++}
++
 +html.andors-duo-exercise [data-test="challenge"],
 +html.andors-duo-exercise [data-test="challenge-container"],
 +html.andors-duo-exercise [data-test="challenge-content"],
@@ -442,10 +449,10 @@ index 00000000..77fcba7a
 +}
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 new file mode 100644
-index 00000000..cc6c1a83
+index 00000000..c393b36f
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,417 @@
 +(function () {
 +  "use strict";
 +
@@ -454,8 +461,8 @@ index 00000000..cc6c1a83
 +   * The native Check button may click the original Duolingo action, but only
 +   * on a direct player tap. Duolingo still grades every exercise.
 +   */
-+  if (window.__andorsCombatUiV9) {
-+    window.__andorsCombatUiV9.refresh();
++  if (window.__andorsCombatUiV10) {
++    window.__andorsCombatUiV10.refresh();
 +    return;
 +  }
 +
@@ -463,6 +470,9 @@ index 00000000..cc6c1a83
 +  var scheduled = false;
 +  var lastType = "none";
 +  var observers = [];
++  var mirroredQuestion = null;
++  var questionValue = "";
++  var mirroredAudio = [];
 +  var roles = {
 +    word: /(?:tap-token|word-bank|wordbank|token-button|token-item)/,
 +    match: /(?:match|pair)/,
@@ -526,6 +536,88 @@ index 00000000..cc6c1a83
 +      if (text) pieces.push(text);
 +    }
 +    return pieces.join(" ").slice(0, 90);
++  }
++
++  function questionText() { return questionValue; }
++  function audioCount() { return mirroredAudio.length; }
++
++  function playAudio(index) {
++    // This delegates one explicit user tap to the authenticated web lesson.
++    // We do not extract URLs, store audio, or reproduce Duolingo's player.
++    var original = mirroredAudio[index];
++    if (!original || !original.isConnected) return false;
++    original.click();
++    return true;
++  }
++
++  function mirrorQuestionAndAudio(type) {
++    var challenge = document.querySelector('[data-test="challenge"]');
++    var searchArea = challenge || document;
++    var targets = searchArea.querySelectorAll(
++      '[data-test="challenge-translate-prompt"],' +
++      '[data-test="challenge-prompt"],' +
++      '[data-test="challenge-sentence"],' +
++      '[data-test="challenge-phrase"],' +
++      '[data-test="challenge-text"],' +
++      '[data-test="challenge-word"],h1,h2,h3,blockquote'
++    );
++    var selected = null;
++    var value = "";
++    for (var i = 0; i < targets.length; i++) {
++      var candidate = targets[i];
++      if (candidate.closest('button,[role=button],[data-andors-ui="choice"],' +
++                            '[data-andors-ui="feedback"],' +
++                            '[data-andors-layout="wordbank"],' +
++                            '[data-andors-layout="matches"]')) continue;
++      if (candidate.querySelector('button,input,textarea,[role=button]')) continue;
++      var caption = (candidate.innerText || candidate.textContent || "")
++        .trim().replace(/\s+/g, " ");
++      if (caption.length < 3 || caption.length > 240 || instruction.test(caption) ||
++          /^(?:correct|nice|great|amazing|excellent|perfect|well done)[.!?]*$/i.test(caption)) {
++        continue;
++      }
++      selected = candidate;
++      value = caption;
++      break;
++    }
++    if (mirroredQuestion && mirroredQuestion !== selected &&
++        mirroredQuestion.isConnected) {
++      mirroredQuestion.removeAttribute("data-andors-mirror");
++    }
++    mirroredQuestion = selected;
++    questionValue = value;
++    if (mirroredQuestion) mirroredQuestion.setAttribute("data-andors-mirror", "question");
++
++    // A matching tile may itself contain an audio player. That is an answer
++    // option, so it must stay interactive in the webpage, not move upstairs.
++    var candidates = document.querySelectorAll('[data-andors-ui="audio"]');
++    var nextAudio = [];
++    if (type !== "matching" && type !== "speaking") {
++      for (var j = 0; j < candidates.length; j++) {
++        var button = candidates[j];
++        var test = attr(button, "data-test");
++        var label = attr(button, "aria-label");
++        if (/(?:choice|option|match|pair|token|mic|record|speak)/.test(test) ||
++            /(?:microphone|record|speak)/.test(label) ||
++            button.closest('[data-andors-layout="matches"],' +
++                           '[data-andors-ui="feedback"],' +
++                           '[data-test="sidebar"],[data-test="topbar"]')) continue;
++        if (button.disabled || !button.isConnected) continue;
++        nextAudio.push(button);
++      }
++    }
++    // Three or more players generally means audio-based answer choices.
++    // Keep those entirely in the original Duolingo interface.
++    if (nextAudio.length > 2) nextAudio = [];
++    mirroredAudio.forEach(function (button) {
++      if (nextAudio.indexOf(button) < 0 && button.isConnected) {
++        button.removeAttribute("data-andors-mirror");
++      }
++    });
++    mirroredAudio = nextAudio;
++    mirroredAudio.forEach(function (button) {
++      button.setAttribute("data-andors-mirror", "audio");
++    });
 +  }
 +
 +  function attr(el, name) {
@@ -626,10 +718,19 @@ index 00000000..cc6c1a83
 +    if (!inExercise) {
 +      root.removeAttribute("data-andors-exercise");
 +      lastType = "none";
-+      window.__andorsCombatUiV9.inExercise = false;
++      window.__andorsCombatUiV10.inExercise = false;
++      if (mirroredQuestion && mirroredQuestion.isConnected) {
++        mirroredQuestion.removeAttribute("data-andors-mirror");
++      }
++      mirroredQuestion = null;
++      mirroredAudio.forEach(function (button) {
++        if (button.isConnected) button.removeAttribute("data-andors-mirror");
++      });
++      questionValue = "";
++      mirroredAudio = [];
 +      return;
 +    }
-+    window.__andorsCombatUiV9.inExercise = true;
++    window.__andorsCombatUiV10.inExercise = true;
 +
 +    var signals = [];
 +    var words = [];
@@ -733,6 +834,7 @@ index 00000000..cc6c1a83
 +    if (type === "typing" || type === "listening" || type === "speaking") {
 +      hideIllustrations();
 +    }
++    mirrorQuestionAndAudio(type);
 +    if (type !== lastType) {
 +      root.setAttribute("data-andors-exercise", type);
 +      lastType = type;
@@ -752,6 +854,7 @@ index 00000000..cc6c1a83
 +  observer.observe(root, {
 +    childList: true,
 +    subtree: true,
++    characterData: true,
 +    attributes: true,
 +    attributeFilter: ["data-test", "aria-label", "role", "aria-pressed"]
 +  });
@@ -759,10 +862,11 @@ index 00000000..cc6c1a83
 +  window.addEventListener("popstate", schedule);
 +  window.addEventListener("hashchange", schedule);
 +  window.setInterval(schedule, 2000);
-+  window.__andorsCombatUiV9 = {
++  window.__andorsCombatUiV10 = {
 +    refresh: refresh, inExercise: false,
 +    actionLabel: actionLabel, activateAction: activateAction,
-+    answerPreview: answerPreview
++    answerPreview: answerPreview, questionText: questionText,
++    audioCount: audioCount, playAudio: playAudio
 +  };
 +  refresh();
 +})();
@@ -943,10 +1047,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..42fc145f
+index 00000000..3dcd4b0d
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,391 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -1002,6 +1106,10 @@ index 00000000..42fc145f
 +
 +    private final Handler handler = new Handler(Looper.getMainLooper());
 +    private final TextView counter;
++    private final TextView question;
++    private final LinearLayout questionBar;
++    private final Button playAudio;
++    private final Button playSlowAudio;
 +    private final Button expand;
 +    private final Button submit;
 +    private final WebView browser;
@@ -1026,9 +1134,11 @@ index 00000000..42fc145f
 +                browser.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
 +                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
 +                        "window.__andorsDuoFeedbackMethod||'none'," +
-+                        "!!(window.__andorsCombatUiV9&&window.__andorsCombatUiV9.inExercise)," +
-+                        "window.__andorsCombatUiV9?window.__andorsCombatUiV9.actionLabel():''," +
-+                        "window.__andorsCombatUiV9?window.__andorsCombatUiV9.answerPreview():'']", result -> {
++                        "!!(window.__andorsCombatUiV10&&window.__andorsCombatUiV10.inExercise)," +
++                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.actionLabel():''," +
++                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.answerPreview():''," +
++                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.questionText():''," +
++                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.audioCount():0]", result -> {
 +                    if (!active || generation != documentGeneration) return;
 +                    try {
 +                        JSONArray state = new JSONArray(result);
@@ -1057,6 +1167,14 @@ index 00000000..42fc145f
 +                        submit.setEnabled(!actionLabel.isEmpty());
 +                        submit.setText(actionLabel.isEmpty() ? "Check" : actionLabel);
 +                        String preview = state.optString(6, "");
++                        String newQuestion = state.optString(7, "");
++                        int audioCount = state.optInt(8, 0);
++                        question.setText(newQuestion);
++                        question.setVisibility(newQuestion.isEmpty() ? View.GONE : View.VISIBLE);
++                        playAudio.setVisibility(audioCount > 0 ? View.VISIBLE : View.GONE);
++                        playSlowAudio.setVisibility(audioCount > 1 ? View.VISIBLE : View.GONE);
++                        questionBar.setVisibility(inExercise &&
++                                (!newQuestion.isEmpty() || audioCount > 0) ? View.VISIBLE : View.GONE);
 +                        lastFeedback = !monitor ? "Connecting"
 +                                : success ? "Correct — attack queued"
 +                                : preview.isEmpty() ? "Ready for answer" : "Answer: " + preview;
@@ -1078,8 +1196,8 @@ index 00000000..42fc145f
 +
 +        String css = loadAsset(context, CSS_ASSET);
 +        combatStyleScript = css.isEmpty() ? "" :
-+                "(function(){var s=document.getElementById('andors-duo-combat-v9');" +
-+                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v9';" +
++                "(function(){var s=document.getElementById('andors-duo-combat-v10');" +
++                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v10';" +
 +                "(document.head||document.documentElement).appendChild(s);}" +
 +                "s.textContent=" + JSONObject.quote(css) + ";})();";
 +        combatLayoutScript = loadAsset(context, JS_ASSET);
@@ -1124,7 +1242,7 @@ index 00000000..42fc145f
 +        submit.setVisibility(View.GONE);
 +        submit.setOnClickListener(v -> {
 +            if (inExercise) browser.evaluateJavascript(
-+                    "window.__andorsCombatUiV9&&window.__andorsCombatUiV9.activateAction()", null);
++                    "window.__andorsCombatUiV10&&window.__andorsCombatUiV10.activateAction()", null);
 +        });
 +        header.addView(submit, new LinearLayout.LayoutParams(dp(65), dp(23)));
 +
@@ -1149,6 +1267,40 @@ index 00000000..42fc145f
 +        });
 +        header.addView(expand, new LinearLayout.LayoutParams(dp(26), dp(23)));
 +        addView(header);
++
++        // Native RPG-style question strip. Only a confidently identified
++        // original prompt is mirrored here; unknown exercise types retain
++        // their unmodified Duolingo prompt in the WebView below.
++        questionBar = new LinearLayout(context);
++        questionBar.setGravity(Gravity.CENTER_VERTICAL);
++        questionBar.setOrientation(HORIZONTAL);
++        questionBar.setPadding(dp(4), dp(2), dp(4), dp(2));
++        questionBar.setBackgroundColor(Color.rgb(28, 45, 67));
++        questionBar.setVisibility(View.GONE);
++
++        question = new TextView(context);
++        question.setTextColor(Color.rgb(239, 226, 199));
++        question.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
++        question.setTextSize(11);
++        question.setMaxLines(2);
++        question.setContentDescription("Tap to expand or collapse the full question text");
++        question.setOnClickListener(v -> question.setMaxLines(
++                question.getMaxLines() == 2 ? 5 : 2));
++        question.setPadding(dp(2), 0, dp(3), 0);
++        questionBar.addView(question, new LinearLayout.LayoutParams(0, -2, 1));
++
++        playAudio = createAudioButton(context, "▶");
++        playAudio.setContentDescription("Play Duolingo question audio");
++        playAudio.setOnClickListener(v -> browser.evaluateJavascript(
++                "window.__andorsCombatUiV10&&window.__andorsCombatUiV10.playAudio(0)", null));
++        questionBar.addView(playAudio, new LinearLayout.LayoutParams(dp(34), dp(27)));
++
++        playSlowAudio = createAudioButton(context, "½×");
++        playSlowAudio.setContentDescription("Play Duolingo question audio slowly");
++        playSlowAudio.setOnClickListener(v -> browser.evaluateJavascript(
++                "window.__andorsCombatUiV10&&window.__andorsCombatUiV10.playAudio(1)", null));
++        questionBar.addView(playSlowAudio, new LinearLayout.LayoutParams(dp(34), dp(27)));
++        addView(questionBar);
 +
 +        browser.setBackgroundColor(Color.rgb(23, 32, 39));
 +        // Let players see when the exercise itself needs scrolling.
@@ -1220,6 +1372,24 @@ index 00000000..42fc145f
 +
 +    private void updateCounter() {
 +        counter.setText("DUO " + totalCorrectCount + " ✓ · " + lastFeedback);
++    }
++
++    private Button createAudioButton(Context context, String label) {
++        Button button = new Button(context);
++        button.setText(label);
++        button.setTextSize(12);
++        button.setAllCaps(false);
++        button.setMinHeight(0);
++        button.setMinWidth(0);
++        button.setPadding(0, 0, 0, 0);
++        button.setTextColor(Color.rgb(237, 220, 184));
++        GradientDrawable frame = new GradientDrawable(
++                GradientDrawable.Orientation.TOP_BOTTOM,
++                new int[]{Color.rgb(52, 82, 116), Color.rgb(31, 51, 74)});
++        frame.setCornerRadius(dp(2));
++        frame.setStroke(dp(1), Color.rgb(120, 145, 176));
++        button.setBackground(frame);
++        return button;
 +    }
 +
 +    private static String loadAsset(Context context, String path) {
@@ -1783,10 +1953,10 @@ HcmV?d00001
 
 diff --git a/AndorsTrail/tools/test_duolingo_combat_skin.js b/AndorsTrail/tools/test_duolingo_combat_skin.js
 new file mode 100644
-index 00000000..ed255ba8
+index 00000000..e6988254
 --- /dev/null
 +++ b/AndorsTrail/tools/test_duolingo_combat_skin.js
-@@ -0,0 +1,234 @@
+@@ -0,0 +1,286 @@
 +/* Minimal offline DOM fixtures for the injected combat-skin JavaScript.
 + * These checks exercise every role classifier without relying on a live
 + * account, Duolingo network responses or private web APIs. */
@@ -1807,7 +1977,7 @@ index 00000000..ed255ba8
 +function element(tag, attributes = {}, text = "", top = 30) {
 +  return {
 +    tag, attributes: { ...attributes }, innerText: text, textContent: text,
-+    parentElement: null, children: [],
++    parentElement: null, children: [], isConnected: true,
 +    getAttribute(name) { return this.attributes[name] ?? null; },
 +    setAttribute(name, value) { this.attributes[name] = value; },
 +    removeAttribute(name) { delete this.attributes[name]; },
@@ -1861,6 +2031,16 @@ index 00000000..ed255ba8
 +
 +  const queryAll = (selector) => {
 +    if (selector === "[data-test]") return nodes.filter(n => n.getAttribute("data-test"));
++    if (selector === '[data-test="challenge"]') return nodes.filter(n =>
++      n.getAttribute("data-test") === "challenge");
++    if (selector === '[data-andors-ui="audio"]') return nodes.filter(n =>
++      n.getAttribute("data-andors-ui") === "audio");
++    if (selector.includes('[data-test="challenge-translate-prompt"]') &&
++        selector.includes('blockquote')) return nodes.filter(n =>
++      ["challenge-translate-prompt", "challenge-prompt", "challenge-sentence",
++        "challenge-phrase", "challenge-text", "challenge-word"]
++        .includes(n.getAttribute("data-test")) ||
++      ["h1", "h2", "h3", "blockquote"].includes(n.tag));
 +    if (selector === "h1,h2,h3") return nodes.filter(n => /^h[123]$/.test(n.tag));
 +    if (selector === "img,svg,canvas") return nodes.filter(n =>
 +      ["img", "svg", "canvas"].includes(n.tag));
@@ -1902,7 +2082,7 @@ index 00000000..ed255ba8
 +  vm.runInNewContext(source, context);
 +  vm.runInNewContext(source, context); // Must be idempotent on SPA reinjection.
 +  assert.equal(observerCount, 1);
-+  return { root, classes, nodes, api: context.window.__andorsCombatUiV9 };
++  return { root, classes, nodes, api: context.window.__andorsCombatUiV10 };
 +}
 +
 +const home = runFixture("/learn", [
@@ -1986,6 +2166,44 @@ index 00000000..ed255ba8
 +  element("div", { "data-test": "challenge-header" }), audioButton
 +]);
 +assert.equal(audioButton.getAttribute("data-andors-ui"), "audio");
++let playbackCount = 0;
++audioButton.click = () => playbackCount++;
++// A refresh identifies the prompt speaker, but playback is user-controlled.
++listening.api.refresh();
++assert.equal(listening.api.audioCount(), 1);
++assert.equal(playbackCount, 0);
++assert.equal(audioButton.getAttribute("data-andors-mirror"), "audio");
++assert.equal(listening.api.playAudio(0), true);
++assert.equal(playbackCount, 1);
++
++const prompt = element("div", { "data-test": "challenge-translate-prompt" },
++  "La rata duerme.");
++const promptFixture = runFixture("/lesson/translate", [
++  element("div", { "data-test": "challenge-header" }), prompt,
++  element("button", { "data-test": "challenge-choice" }, "The rat sleeps")
++]);
++assert.equal(promptFixture.api.questionText(), "La rata duerme.");
++assert.equal(prompt.getAttribute("data-andors-mirror"), "question");
++assert.equal(promptFixture.api.audioCount(), 0);
++
++const unknown = element("p", {}, "Translate the highlighted phrase");
++const unknownFixture = runFixture("/lesson/unknown", [
++  element("div", { "data-test": "challenge-header" }), unknown
++]);
++assert.equal(unknownFixture.api.questionText(), "");
++assert.equal(unknown.getAttribute("data-andors-mirror"), null,
++  "Unknown prompts must remain visible in the embedded page");
++
++const matchAudio = element("button", {
++  "data-test": "challenge-matching-audio", "aria-label": "Play audio"
++});
++const audioMatching = runFixture("/lesson/audio-match", [
++  element("div", { "data-test": "challenge-header" }),
++  element("button", { "data-test": "challenge-matching-pair" }), matchAudio
++]);
++assert.equal(audioMatching.api.audioCount(), 0,
++  "Matching answer sounds must remain inside their original answer tiles");
++assert.equal(matchAudio.getAttribute("data-andors-mirror"), null);
 +
 +let nativeSubmissionCount = 0;
 +const originalCheck = element("button", {}, "Check");
@@ -2008,9 +2226,13 @@ index 00000000..ed255ba8
 +assert(css.includes('[data-andors-chrome="hide"]'));
 +assert(css.includes('[data-andors-layout="matches"]'));
 +assert(css.includes('[data-andors-layout="selected-answer"]'));
++assert(css.includes('[data-andors-mirror="question"]'));
++assert(css.includes('[data-andors-mirror="audio"]'));
 +assert(panel.includes("enemyHeight * (enlarged ? 2.0f : 1.5f)"));
 +assert(panel.includes("private boolean enlarged = true"));
-+assert(panel.includes("window.__andorsCombatUiV9.activateAction()"));
++assert(panel.includes("window.__andorsCombatUiV10.activateAction()"));
++assert(panel.includes("window.__andorsCombatUiV10.questionText()"));
++assert(panel.includes("window.__andorsCombatUiV10.playAudio(0)"));
 +assert(panel.includes("window.__andorsDuoCompact=true"));
 +assert(monitor.includes("window.__andorsDuoCompact?laidOut:shown(b)"),
 +  "The compact layout must not break success detection when Continue scrolls");
@@ -2020,4 +2242,4 @@ index 00000000..ed255ba8
 +  source.indexOf("function schedule()"));
 +assert(!/\.click\s*\(/.test(refreshCode),
 +  "Refreshing the skin must never submit an answer automatically");
-+console.log("Duolingo combat skin: home, matching, word bank, typing, choices, audio and reinjection passed.");
++console.log("Duolingo combat skin: native question/audio, safe matching, words, choices, typing, check, and reinjection passed.");
