@@ -449,7 +449,7 @@ index 00000000..41a372c3
 +}
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 new file mode 100644
-index 00000000..b8f7ed21
+index 00000000..8e61b0fe
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 @@ -0,0 +1,635 @@
@@ -711,9 +711,9 @@ index 00000000..b8f7ed21
 +      nativeTargets.push(control);
 +    }
 +    state.mode = mode;
-+    var heading = instructionHeading();
-+    state.prompt = mode === "choices" && heading && !mirroredAudio.length ?
-+      heading + ": " + promptText : promptText;
++    // Like Anki, the large central frame displays just the question/stimulus;
++    // instructional Duolingo chrome is not part of the mirrored question.
++    state.prompt = promptText;
 +    state.options = options;
 +    state.selected = answerPreview();
 +    return state;
@@ -2424,7 +2424,7 @@ HcmV?d00001
 
 diff --git a/AndorsTrail/tools/test_duolingo_combat_skin.js b/AndorsTrail/tools/test_duolingo_combat_skin.js
 new file mode 100644
-index 00000000..6d94e9d2
+index 00000000..3e423efe
 --- /dev/null
 +++ b/AndorsTrail/tools/test_duolingo_combat_skin.js
 @@ -0,0 +1,435 @@
@@ -2787,7 +2787,7 @@ index 00000000..6d94e9d2
 +]);
 +assert.equal(meaningFixture.api.nativeState().mode, "choices");
 +assert.equal(meaningFixture.api.nativeState().prompt,
-+  "Select the correct meaning: musician");
++  "musician", "Only the stimulus should appear in the Anki-style question box");
 +
 +const missingTargetFixture = runFixture("/lesson/missing-target", [
 +  element("div", { "data-test": "challenge-header" }),
