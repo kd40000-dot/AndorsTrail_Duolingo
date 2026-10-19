@@ -32,7 +32,7 @@ index 25463ca0..853f5e56 100644
          beta {
              manifestPlaceholders icon_name: 'icon_beta', fileproviderPath: 'AndorsTrail.beta2'
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..781b4588 100644
+index 1e190966..4b22061b 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
 @@ -2,8 +2,8 @@
@@ -41,8 +41,8 @@ index 1e190966..781b4588 100644
  	xmlns:android="http://schemas.android.com/apk/res/android" 
 -	android:versionCode="89"
 -	android:versionName="0.8.18"
-+	android:versionCode="95"
-+	android:versionName="0.8.18-duo11"
++	android:versionCode="96"
++	android:versionName="0.8.18-duo12"
  	android:installLocation="auto"
  	>
  
@@ -449,10 +449,10 @@ index 00000000..41a372c3
 +}
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 new file mode 100644
-index 00000000..24e8cac0
+index 00000000..6b5553a2
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
-@@ -0,0 +1,566 @@
+@@ -0,0 +1,607 @@
 +(function () {
 +  "use strict";
 +
@@ -461,8 +461,8 @@ index 00000000..24e8cac0
 +   * The native Check button may click the original Duolingo action, but only
 +   * on a direct player tap. Duolingo still grades every exercise.
 +   */
-+  if (window.__andorsCombatUiV11) {
-+    window.__andorsCombatUiV11.refresh();
++  if (window.__andorsCombatUiV12) {
++    window.__andorsCombatUiV12.refresh();
 +    return;
 +  }
 +
@@ -484,7 +484,7 @@ index 00000000..24e8cac0
 +    feedback: /(?:challenge-footer|feedback|result-panel|answer-feedback)/,
 +    progress: /(?:lesson-progress|challenge-progress|progress-bar)/
 +  };
-+  var instruction = /^(?:type what you hear|type the missing word|tap the matching pairs|match the pairs|translate this sentence|write this in (?:english|vietnamese|spanish|french|german)|complete the sentence|listen and (?:respond|type|write)|select the correct (?:translation|answer)|choose the correct (?:translation|answer)|fill in the blank|tap what you hear)[.!?]*$/i;
++  var instruction = /^(?:type what you hear|type the missing word|tap the matching pairs|match the pairs|translate this sentence|write this in (?:english|vietnamese|spanish|french|german)|complete the sentence|listen and (?:respond|type|write)|select the correct (?:meaning|definition|translation|answer)|choose the correct (?:meaning|definition|translation|answer)|select the (?:right|correct) meaning|complete the sentence|fill in the blank|tap what you hear|what does this mean|which is the correct translation)[.!?]*$/i;
 +
 +  function realAction() {
 +    var controls = document.querySelectorAll("button,[role=button]");
@@ -556,23 +556,42 @@ index 00000000..24e8cac0
 +   * Android controls. Every tap/keystroke is forwarded to the original DOM;
 +   * this never implements Duolingo grading or fabricates correct answers. */
 +  function mainPrompt() {
-+    var candidates = document.querySelectorAll(
-+      '[data-test="challenge-translate-prompt"],' +
-+      '[data-test="challenge-prompt"],' +
-+      '[data-test="challenge-sentence"],' +
-+      '[data-test="challenge-phrase"],' +
-+      '[data-test="challenge-text"],blockquote,h1,h2,h3'
-+    );
-+    for (var i = 0; i < candidates.length; i++) {
-+      var node = candidates[i];
-+      if (node.closest('button,[role=button],[data-andors-ui="feedback"]')) continue;
-+      if (node.querySelector('input,textarea,button,[role=button]')) continue;
-+      var value = (node.innerText || node.textContent || "")
-+        .replace(/\s+/g, " ").trim();
-+      if (value.length >= 3 && value.length <= 220 && !instruction.test(value) &&
-+          !/^(?:correct|great|nice|excellent|well done)[.!?]*$/i.test(value)) {
++    var scope = document.querySelector('[data-test="challenge"]') || document;
++    var selectors = [
++      '[data-test="challenge-translate-prompt"],[data-test="challenge-prompt"],' +
++        '[data-test="challenge-sentence"],[data-test="challenge-phrase"],' +
++        '[data-test="challenge-text"],[data-test="challenge-word"],' +
++        '[data-test*="stimulus"],[data-test*="question"],blockquote',
++      'h1,h2,h3,p,span,[lang],[dir="auto"]'
++    ];
++    for (var pass = 0; pass < selectors.length; pass++) {
++      var candidates = scope.querySelectorAll(selectors[pass]);
++      for (var i = 0; i < candidates.length; i++) {
++        var node = candidates[i];
++        if (node.closest('button,[role=button],nav,[data-andors-ui="choice"],' +
++                         '[data-andors-ui="word"],[data-andors-ui="match"],' +
++                         '[data-andors-ui="feedback"],[data-andors-chrome="hide"],' +
++                         '[data-test="sidebar"],[data-test="topbar"]')) continue;
++        if (node.querySelector('input,textarea,button,[role=button]')) continue;
++        var value = (node.innerText || node.textContent || "")
++          .replace(/\s+/g, " ").trim();
++        if (value.length < 2 || value.length > 220 || instruction.test(value) ||
++            !/\p{L}/u.test(value) ||
++            /^(?:correct|great|nice|excellent|well done|check|continue|make harder)[.!?]*$/i.test(value)) {
++          continue;
++        }
 +        return value;
 +      }
++    }
++    return "";
++  }
++
++  function instructionHeading() {
++    var headings = document.querySelectorAll("h1,h2,h3");
++    for (var i = 0; i < headings.length; i++) {
++      var label = (headings[i].innerText || headings[i].textContent || "")
++        .replace(/\s+/g, " ").trim();
++      if (instruction.test(label)) return label;
 +    }
 +    return "";
 +  }
@@ -618,7 +637,7 @@ index 00000000..24e8cac0
 +    nativeInput = null;
 +    var state = { mode: "web", prompt: "", input: "", multiline: false,
 +      options: [], selected: "" };
-+    if (!window.__andorsCombatUiV11.inExercise) return state;
++    if (!window.__andorsCombatUiV12.inExercise) return state;
 +
 +    var input = answerInput();
 +    if (input) {
@@ -643,6 +662,9 @@ index 00000000..24e8cac0
 +    if (mode === "wordbank" && !promptText && mirroredAudio.length) {
 +      promptText = "Listen and choose the words";
 +    }
++    if (mode === "choices" && !promptText && mirroredAudio.length) {
++      promptText = "Listen and select the meaning";
++    }
 +    if (promptText.length < 3 || candidates.length < 2 || candidates.length > 24) return state;
 +    var options = [];
 +    for (var i = 0; i < candidates.length; i++) {
@@ -663,7 +685,9 @@ index 00000000..24e8cac0
 +      nativeTargets.push(control);
 +    }
 +    state.mode = mode;
-+    state.prompt = promptText;
++    var heading = instructionHeading();
++    state.prompt = mode === "choices" && heading && !mirroredAudio.length ?
++      heading + ": " + promptText : promptText;
 +    state.options = options;
 +    state.selected = answerPreview();
 +    return state;
@@ -748,6 +772,8 @@ index 00000000..24e8cac0
 +        if (/(?:choice|option|match|pair|token|mic|record|speak)/.test(test) ||
 +            /(?:microphone|record|speak)/.test(label) ||
 +            button.closest('[data-andors-layout="matches"],' +
++                           '[data-andors-ui="choice"],[data-andors-ui="word"],' +
++                           '[data-andors-ui="match"],' +
 +                           '[data-andors-ui="feedback"],' +
 +                           '[data-test="sidebar"],[data-test="topbar"]')) continue;
 +        if (button.disabled || !button.isConnected) continue;
@@ -866,7 +892,7 @@ index 00000000..24e8cac0
 +    if (!inExercise) {
 +      root.removeAttribute("data-andors-exercise");
 +      lastType = "none";
-+      window.__andorsCombatUiV11.inExercise = false;
++      window.__andorsCombatUiV12.inExercise = false;
 +      if (mirroredQuestion && mirroredQuestion.isConnected) {
 +        mirroredQuestion.removeAttribute("data-andors-mirror");
 +      }
@@ -878,7 +904,7 @@ index 00000000..24e8cac0
 +      mirroredAudio = [];
 +      return;
 +    }
-+    window.__andorsCombatUiV11.inExercise = true;
++    window.__andorsCombatUiV12.inExercise = true;
 +
 +    var signals = [];
 +    var words = [];
@@ -926,6 +952,21 @@ index 00000000..24e8cac0
 +        mark(el, "choice");
 +        hasChoices = true;
 +      }
++    }
++
++    // Some listening questions use an unlabeled data-test button with only
++    // an accessible "Play"/"Listen" title. Keep the actual audio controls
++    // discoverable even when their page implementation changes.
++    var allActions = document.querySelectorAll('button,[role=button]');
++    for (var a = 0; a < allActions.length; a++) {
++      var control = allActions[a];
++      var accessible = (attr(control, 'aria-label') || attr(control, 'title')).trim();
++      if (!/^(?:play|play audio|play sound|listen|replay|play normal|play slowly|slow audio)$/.test(accessible)) {
++        continue;
++      }
++      if (!control.closest('[data-andors-ui="feedback"],' +
++                           '[data-andors-ui="choice"],[data-andors-ui="match"],' +
++                           '[data-andors-ui="word"]')) mark(control, "audio");
 +    }
 +
 +    attachWordbankLayout(words);
@@ -1010,7 +1051,7 @@ index 00000000..24e8cac0
 +  window.addEventListener("popstate", schedule);
 +  window.addEventListener("hashchange", schedule);
 +  window.setInterval(schedule, 2000);
-+  window.__andorsCombatUiV11 = {
++  window.__andorsCombatUiV12 = {
 +    refresh: refresh, inExercise: false,
 +    actionLabel: actionLabel, activateAction: activateAction,
 +    answerPreview: answerPreview, questionText: questionText,
@@ -1196,10 +1237,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..b4740860
+index 00000000..ba15f9ed
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,605 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -1300,12 +1341,12 @@ index 00000000..b4740860
 +                browser.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
 +                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
 +                        "window.__andorsDuoFeedbackMethod||'none'," +
-+                        "!!(window.__andorsCombatUiV11&&window.__andorsCombatUiV11.inExercise)," +
-+                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.actionLabel():''," +
-+                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.answerPreview():''," +
-+                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.questionText():''," +
-+                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.audioCount():0," +
-+                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.nativeState():null]", result -> {
++                        "!!(window.__andorsCombatUiV12&&window.__andorsCombatUiV12.inExercise)," +
++                        "window.__andorsCombatUiV12?window.__andorsCombatUiV12.actionLabel():''," +
++                        "window.__andorsCombatUiV12?window.__andorsCombatUiV12.answerPreview():''," +
++                        "window.__andorsCombatUiV12?window.__andorsCombatUiV12.questionText():''," +
++                        "window.__andorsCombatUiV12?window.__andorsCombatUiV12.audioCount():0," +
++                        "window.__andorsCombatUiV12?window.__andorsCombatUiV12.nativeState():null]", result -> {
 +                    if (!active || generation != documentGeneration) return;
 +                    try {
 +                        JSONArray state = new JSONArray(result);
@@ -1367,8 +1408,8 @@ index 00000000..b4740860
 +
 +        String css = loadAsset(context, CSS_ASSET);
 +        combatStyleScript = css.isEmpty() ? "" :
-+                "(function(){var s=document.getElementById('andors-duo-combat-v11');" +
-+                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v11';" +
++                "(function(){var s=document.getElementById('andors-duo-combat-v12');" +
++                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v12';" +
 +                "(document.head||document.documentElement).appendChild(s);}" +
 +                "s.textContent=" + JSONObject.quote(css) + ";})();";
 +        combatLayoutScript = loadAsset(context, JS_ASSET);
@@ -1413,7 +1454,7 @@ index 00000000..b4740860
 +        submit.setVisibility(View.GONE);
 +        submit.setOnClickListener(v -> {
 +            if (inExercise) browser.evaluateJavascript(
-+                    "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.activateAction()", null);
++                    "window.__andorsCombatUiV12&&window.__andorsCombatUiV12.activateAction()", null);
 +        });
 +        header.addView(submit, new LinearLayout.LayoutParams(dp(65), dp(23)));
 +
@@ -1473,13 +1514,13 @@ index 00000000..b4740860
 +        playAudio = createAudioButton(context, "▶");
 +        playAudio.setContentDescription("Play Duolingo question audio");
 +        playAudio.setOnClickListener(v -> browser.evaluateJavascript(
-+                "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.playAudio(0)", null));
++                "window.__andorsCombatUiV12&&window.__andorsCombatUiV12.playAudio(0)", null));
 +        questionBar.addView(playAudio, new LinearLayout.LayoutParams(dp(34), dp(27)));
 +
 +        playSlowAudio = createAudioButton(context, "½×");
 +        playSlowAudio.setContentDescription("Play Duolingo question audio slowly");
 +        playSlowAudio.setOnClickListener(v -> browser.evaluateJavascript(
-+                "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.playAudio(1)", null));
++                "window.__andorsCombatUiV12&&window.__andorsCombatUiV12.playAudio(1)", null));
 +        questionBar.addView(playSlowAudio, new LinearLayout.LayoutParams(dp(34), dp(27)));
 +        addView(questionBar);
 +
@@ -1555,8 +1596,8 @@ index 00000000..b4740860
 +        nativeInput.setBackground(answerFrame);
 +        nativeInput.setOnEditorActionListener((v, actionId, event) -> {
 +            if (actionId == EditorInfo.IME_ACTION_DONE) {
-+                browser.evaluateJavascript("window.__andorsCombatUiV11&&" +
-+                        "window.__andorsCombatUiV11.activateAction()", null);
++                browser.evaluateJavascript("window.__andorsCombatUiV12&&" +
++                        "window.__andorsCombatUiV12.activateAction()", null);
 +                return true;
 +            }
 +            return false;
@@ -1565,8 +1606,8 @@ index 00000000..b4740860
 +            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
 +            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
 +                if (!updatingInput && "typing".equals(nativeMode) && !forceWeb) {
-+                    browser.evaluateJavascript("window.__andorsCombatUiV11&&" +
-+                            "window.__andorsCombatUiV11.nativeSetText(" +
++                    browser.evaluateJavascript("window.__andorsCombatUiV12&&" +
++                            "window.__andorsCombatUiV12.nativeSetText(" +
 +                            JSONObject.quote(s.toString()) + ")", null);
 +                }
 +            }
@@ -1674,10 +1715,30 @@ index 00000000..b4740860
 +    private void rebuildNativeOptions(JSONArray options) {
 +        nativeOptions.removeAllViews();
 +        if (options == null) return;
-+        for (int i = 0; i < options.length(); i += 2) {
++        // Three short choices fit comfortably in one row on phone screens.
++        // The previous two-column layout clipped the third option beneath
++        // the strict two-enemy-row combat height shown in the user's capture.
++        int columns = 2;
++        float screenWidthDp = getResources().getDisplayMetrics().widthPixels /
++                getResources().getDisplayMetrics().density;
++        if (screenWidthDp >= 310 && options.length() >= 3) {
++            boolean shortLabels = true;
++            for (int i = 0; i < options.length(); i++) {
++                JSONObject option = options.optJSONObject(i);
++                if (option == null || option.optString("text", "").length() > 16) {
++                    shortLabels = false;
++                    break;
++                }
++            }
++            if (shortLabels && (options.length() == 3 ||
++                    ("wordbank".equals(nativeMode) && options.length() >= 6))) {
++                columns = 3;
++            }
++        }
++        for (int i = 0; i < options.length(); i += columns) {
 +            LinearLayout row = new LinearLayout(getContext());
 +            row.setOrientation(HORIZONTAL);
-+            for (int j = i; j < Math.min(i + 2, options.length()); j++) {
++            for (int j = i; j < Math.min(i + columns, options.length()); j++) {
 +                JSONObject option = options.optJSONObject(j);
 +                if (option == null) continue;
 +                int index = option.optInt("id", j);
@@ -1696,10 +1757,10 @@ index 00000000..b4740860
 +                    button.setBackground(selectedFrame);
 +                }
 +                button.setOnClickListener(v -> browser.evaluateJavascript(
-+                        "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.nativeTap(" +
++                        "window.__andorsCombatUiV12&&window.__andorsCombatUiV12.nativeTap(" +
 +                                index + ")", null));
 +                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-+                        0, dp(31), 1);
++                        0, dp(columns == 3 ? 29 : 31), 1);
 +                params.setMargins(dp(2), dp(1), dp(2), dp(1));
 +                row.addView(button, params);
 +            }
@@ -2296,10 +2357,10 @@ HcmV?d00001
 
 diff --git a/AndorsTrail/tools/test_duolingo_combat_skin.js b/AndorsTrail/tools/test_duolingo_combat_skin.js
 new file mode 100644
-index 00000000..9b41a941
+index 00000000..7db7b44c
 --- /dev/null
 +++ b/AndorsTrail/tools/test_duolingo_combat_skin.js
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,397 @@
 +/* Minimal offline DOM fixtures for the injected combat-skin JavaScript.
 + * These checks exercise every role classifier without relying on a live
 + * account, Duolingo network responses or private web APIs. */
@@ -2394,6 +2455,9 @@ index 00000000..9b41a941
 +        "challenge-phrase", "challenge-text", "challenge-word"]
 +        .includes(n.getAttribute("data-test")) ||
 +      ["h1", "h2", "h3", "blockquote"].includes(n.tag));
++    if (selector.startsWith('h1,h2,h3,p,span,')) return nodes.filter(n =>
++      ["h1", "h2", "h3", "p", "span"].includes(n.tag) ||
++      n.getAttribute("lang") !== null || n.getAttribute("dir") === "auto");
 +    if (selector === "h1,h2,h3") return nodes.filter(n => /^h[123]$/.test(n.tag));
 +    if (selector === "img,svg,canvas") return nodes.filter(n =>
 +      ["img", "svg", "canvas"].includes(n.tag));
@@ -2449,7 +2513,7 @@ index 00000000..9b41a941
 +  vm.runInNewContext(source, context);
 +  vm.runInNewContext(source, context); // Must be idempotent on SPA reinjection.
 +  assert.equal(observerCount, 1);
-+  return { root, classes, nodes, api: context.window.__andorsCombatUiV11 };
++  return { root, classes, nodes, api: context.window.__andorsCombatUiV12 };
 +}
 +
 +const home = runFixture("/learn", [
@@ -2618,6 +2682,34 @@ index 00000000..9b41a941
 +assert.equal(nativeChoice.api.nativeTap(0), true);
 +assert.equal(nativeChoiceClicks, 1, "Native taps must forward to the real answer node");
 +
++// Reproduces the user's screenshot: the challenge heading is just an
++// instruction. Do not render native answer options unless the actual target
++// word is discovered (or a question-audio player is available).
++const targetWord = element("span", {}, "musician");
++const meaningHeading = element("h2", {}, "Select the correct meaning");
++const meaningChoices = [
++  element("button", { "data-test": "challenge-choice" }, "nhạc sĩ"),
++  element("button", { "data-test": "challenge-choice" }, "tai nạn"),
++  element("button", { "data-test": "challenge-choice" }, "luật sư")
++];
++const meaningFixture = runFixture("/lesson/meaning", [
++  element("div", { "data-test": "challenge-header" }),
++  meaningHeading, targetWord, ...meaningChoices
++]);
++assert.equal(meaningFixture.api.nativeState().mode, "choices");
++assert.equal(meaningFixture.api.nativeState().prompt,
++  "Select the correct meaning: musician");
++
++const missingTargetFixture = runFixture("/lesson/missing-target", [
++  element("div", { "data-test": "challenge-header" }),
++  element("h2", {}, "Select the correct meaning"),
++  ...meaningChoices.map(node => element("button", {
++    "data-test": "challenge-choice"
++  }, node.innerText))
++]);
++assert.equal(missingTargetFixture.api.nativeState().mode, "web",
++  "When the real question is unreadable, keep the entire web exercise available");
++
 +const nativeMatch = match.api.nativeState();
 +assert.equal(nativeMatch.mode, "matching");
 +assert.equal(nativeMatch.options.length, 4);
@@ -2648,12 +2740,14 @@ index 00000000..9b41a941
 +assert(css.includes('[data-andors-mirror="audio"]'));
 +assert(panel.includes("enemyHeight * (enlarged ? 2.0f : 1.5f)"));
 +assert(panel.includes("private boolean enlarged = true"));
-+assert(panel.includes("window.__andorsCombatUiV11.activateAction()"));
-+assert(panel.includes("window.__andorsCombatUiV11.questionText()"));
-+assert(panel.includes("window.__andorsCombatUiV11.playAudio(0)"));
-+assert(panel.includes("window.__andorsCombatUiV11.nativeSetText("));
-+assert(panel.includes("window.__andorsCombatUiV11.nativeTap("));
++assert(panel.includes("window.__andorsCombatUiV12.activateAction()"));
++assert(panel.includes("window.__andorsCombatUiV12.questionText()"));
++assert(panel.includes("window.__andorsCombatUiV12.playAudio(0)"));
++assert(panel.includes("window.__andorsCombatUiV12.nativeSetText("));
++assert(panel.includes("window.__andorsCombatUiV12.nativeTap("));
 +assert(panel.includes("browser.setAlpha(nativeShown ? 0f : 1f)"));
++assert(panel.includes("columns = 3"),
++  "Three short multiple-choice answers must fit without clipping the last row");
 +assert(panel.includes("window.__andorsDuoCompact=true"));
 +assert(monitor.includes("window.__andorsDuoCompact?laidOut:shown(b)"),
 +  "The compact layout must not break success detection when Continue scrolls");
@@ -2663,4 +2757,4 @@ index 00000000..9b41a941
 +  source.indexOf("function schedule()"));
 +assert(!/\.click\s*\(/.test(refreshCode),
 +  "Refreshing the skin must never submit an answer automatically");
-+console.log("Duolingo combat: native blanks, text events, choices, matching, audio, check, fallback and reinjection passed.");
++console.log("Duolingo combat: full stimulus, missing-prompt fallback, compact choices, typing, matching, audio and grading bridge passed.");
