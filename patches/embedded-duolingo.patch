@@ -32,7 +32,7 @@ index 25463ca0..853f5e56 100644
          beta {
              manifestPlaceholders icon_name: 'icon_beta', fileproviderPath: 'AndorsTrail.beta2'
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..4b22061b 100644
+index 1e190966..73171dd0 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
 @@ -2,8 +2,8 @@
@@ -41,8 +41,8 @@ index 1e190966..4b22061b 100644
  	xmlns:android="http://schemas.android.com/apk/res/android" 
 -	android:versionCode="89"
 -	android:versionName="0.8.18"
-+	android:versionCode="96"
-+	android:versionName="0.8.18-duo12"
++	android:versionCode="97"
++	android:versionName="0.8.18-duo13"
  	android:installLocation="auto"
  	>
  
@@ -449,10 +449,10 @@ index 00000000..41a372c3
 +}
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 new file mode 100644
-index 00000000..6b5553a2
+index 00000000..b8f7ed21
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
-@@ -0,0 +1,607 @@
+@@ -0,0 +1,635 @@
 +(function () {
 +  "use strict";
 +
@@ -475,6 +475,11 @@ index 00000000..6b5553a2
 +  var mirroredAudio = [];
 +  var nativeTargets = [];
 +  var nativeInput = null;
++  // Freeze the unfilled exercise before React mirrors typed text into its
++  // surrounding sentence. Re-reading that DOM after typing can leak the
++  // user's answer into the native question box.
++  var promptInput = null;
++  var unfilledPrompt = "";
 +  var roles = {
 +    word: /(?:tap-token|word-bank|wordbank|token-button|token-item)/,
 +    match: /(?:match|pair)/,
@@ -564,6 +569,10 @@ index 00000000..6b5553a2
 +        '[data-test*="stimulus"],[data-test*="question"],blockquote',
 +      'h1,h2,h3,p,span,[lang],[dir="auto"]'
 +    ];
++    var choices = document.querySelectorAll(
++      '[data-andors-ui="choice"],[data-andors-ui="word"],' +
++      '[data-andors-ui="match"]'
++    );
 +    for (var pass = 0; pass < selectors.length; pass++) {
 +      var candidates = scope.querySelectorAll(selectors[pass]);
 +      for (var i = 0; i < candidates.length; i++) {
@@ -575,8 +584,16 @@ index 00000000..6b5553a2
 +        if (node.querySelector('input,textarea,button,[role=button]')) continue;
 +        var value = (node.innerText || node.textContent || "")
 +          .replace(/\s+/g, " ").trim();
++        // An option's text is never itself a safe question, including when
++        // React renders a second copy in a loose span or paragraph.
++        var fromOption = false;
++        for (var c = 0; c < choices.length; c++) {
++          var choiceText = (choices[c].innerText || choices[c].textContent || "")
++            .replace(/\s+/g, " ").trim();
++          if (choiceText && choiceText === value) { fromOption = true; break; }
++        }
 +        if (value.length < 2 || value.length > 220 || instruction.test(value) ||
-+            !/\p{L}/u.test(value) ||
++            fromOption || !/\p{L}/u.test(value) ||
 +            /^(?:correct|great|nice|excellent|well done|check|continue|make harder)[.!?]*$/i.test(value)) {
 +          continue;
 +        }
@@ -641,8 +658,17 @@ index 00000000..6b5553a2
 +
 +    var input = answerInput();
 +    if (input) {
-+      var sentence = sentenceAroundInput(input);
-+      var prompt = sentence || mainPrompt();
++      if (promptInput !== input) {
++        promptInput = input;
++        unfilledPrompt = "";
++      }
++      var typed = (input.value || input.innerText || "").trim();
++      if (!typed) {
++        // Refresh when blank: the same DOM input can be reused for the next
++        // question. Never refresh from its container after any input exists.
++        unfilledPrompt = sentenceAroundInput(input) || mainPrompt();
++      }
++      var prompt = unfilledPrompt;
 +      if (prompt.length >= 8) {
 +        nativeInput = input;
 +        state.mode = "typing";
@@ -902,6 +928,8 @@ index 00000000..6b5553a2
 +      });
 +      questionValue = "";
 +      mirroredAudio = [];
++      promptInput = null;
++      unfilledPrompt = "";
 +      return;
 +    }
 +    window.__andorsCombatUiV12.inExercise = true;
@@ -1237,10 +1265,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..ba15f9ed
+index 00000000..a5abe49d
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,605 @@
+@@ -0,0 +1,644 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -1254,6 +1282,7 @@ index 00000000..ba15f9ed
 +import android.text.TextWatcher;
 +import android.util.Log;
 +import android.util.AttributeSet;
++import android.util.TypedValue;
 +import android.view.Gravity;
 +import android.view.View;
 +import android.view.inputmethod.EditorInfo;
@@ -1302,6 +1331,7 @@ index 00000000..ba15f9ed
 +
 +    private final Handler handler = new Handler(Looper.getMainLooper());
 +    private final TextView counter;
++    private final LinearLayout header;
 +    private final TextView question;
 +    private final LinearLayout questionBar;
 +    private final Button playAudio;
@@ -1374,7 +1404,6 @@ index 00000000..ba15f9ed
 +                        submit.setVisibility(inExercise ? View.VISIBLE : View.GONE);
 +                        submit.setEnabled(!actionLabel.isEmpty());
 +                        submit.setText(actionLabel.isEmpty() ? "Check" : actionLabel);
-+                        String preview = state.optString(6, "");
 +                        String newQuestion = state.optString(7, "");
 +                        int audioCount = state.optInt(8, 0);
 +                        updateNativeUi(state.optJSONObject(9));
@@ -1387,9 +1416,11 @@ index 00000000..ba15f9ed
 +                        questionBar.setVisibility(inExercise &&
 +                                ((!nativeShown && !newQuestion.isEmpty()) || audioCount > 0) ?
 +                                View.VISIBLE : View.GONE);
++                        // Never expose the live answer in combat chrome. The
++                        // Anki-style response field alone displays what the
++                        // player has entered; Duolingo still grades it.
 +                        lastFeedback = !monitor ? "Connecting"
-+                                : success ? "Correct — attack queued"
-+                                : preview.isEmpty() ? "Ready for answer" : "Answer: " + preview;
++                                : success ? "Correct — attack queued" : "Ready";
 +                        updateCounter();
 +                    } catch (JSONException ignored) {
 +                        // Navigations can transiently interrupt JavaScript evaluation.
@@ -1405,6 +1436,7 @@ index 00000000..ba15f9ed
 +        super(context, attributes);
 +        setOrientation(VERTICAL);
 +        setPadding(dp(2), dp(2), dp(2), dp(2));
++        applyGameFrame(this, R.attr.ui_theme_stdframe_bitmap);
 +
 +        String css = loadAsset(context, CSS_ASSET);
 +        combatStyleScript = css.isEmpty() ? "" :
@@ -1416,7 +1448,7 @@ index 00000000..ba15f9ed
 +        // The native Check button captures this final field below.
 +        browser = new WebView(context);
 +
-+        LinearLayout header = new LinearLayout(context);
++        header = new LinearLayout(context);
 +        header.setOrientation(HORIZONTAL);
 +        header.setGravity(Gravity.CENTER_VERTICAL);
 +        header.setPadding(dp(3), 0, dp(3), 0);
@@ -1438,26 +1470,18 @@ index 00000000..ba15f9ed
 +
 +        submit = new Button(context);
 +        submit.setText("Check");
-+        submit.setTextSize(10);
-+        submit.setTextColor(Color.rgb(255, 242, 210));
-+        submit.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
++        submit.setTextSize(13);
++        submit.setTextColor(Color.rgb(240, 240, 244));
++        submit.setTypeface(Typeface.MONOSPACE);
 +        submit.setAllCaps(false);
 +        submit.setMinHeight(0);
 +        submit.setMinWidth(0);
 +        submit.setPadding(dp(2), 0, dp(2), 0);
-+        GradientDrawable submitFrame = new GradientDrawable(
-+                GradientDrawable.Orientation.TOP_BOTTOM,
-+                new int[]{Color.rgb(126, 98, 56), Color.rgb(76, 58, 35)});
-+        submitFrame.setCornerRadius(dp(2));
-+        submitFrame.setStroke(dp(1), Color.rgb(236, 199, 131));
-+        submit.setBackground(submitFrame);
 +        submit.setVisibility(View.GONE);
 +        submit.setOnClickListener(v -> {
 +            if (inExercise) browser.evaluateJavascript(
 +                    "window.__andorsCombatUiV12&&window.__andorsCombatUiV12.activateAction()", null);
 +        });
-+        header.addView(submit, new LinearLayout.LayoutParams(dp(65), dp(23)));
-+
 +        webToggle = createAudioButton(context, "Web");
 +        webToggle.setTextSize(10);
 +        webToggle.setVisibility(View.GONE);
@@ -1564,36 +1588,61 @@ index 00000000..ba15f9ed
 +        nativeScroll = new ScrollView(context);
 +        nativeScroll.setFillViewport(true);
 +        nativeScroll.setVerticalScrollBarEnabled(true);
-+        nativeScroll.setBackgroundColor(Color.rgb(19, 33, 51));
++        nativeScroll.setBackgroundColor(Color.TRANSPARENT);
 +        nativeScroll.setVisibility(View.GONE);
 +        LinearLayout nativeStack = new LinearLayout(context);
 +        nativeStack.setOrientation(VERTICAL);
-+        nativeStack.setPadding(dp(5), dp(3), dp(5), dp(3));
++        nativeStack.setPadding(dp(3), dp(2), dp(3), dp(2));
 +
 +        nativePrompt = new TextView(context);
-+        nativePrompt.setTextColor(Color.rgb(239, 226, 199));
++        nativePrompt.setTextColor(Color.rgb(248, 248, 248));
 +        nativePrompt.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-+        nativePrompt.setTextSize(12);
-+        nativePrompt.setPadding(dp(4), dp(2), dp(4), dp(4));
-+        nativePrompt.setMaxLines(3);
++        nativePrompt.setTextSize(17);
++        nativePrompt.setGravity(Gravity.CENTER);
++        nativePrompt.setMinHeight(dp(36));
++        nativePrompt.setPadding(dp(37), dp(3), dp(37), dp(3));
++        nativePrompt.setMaxLines(2);
++        applyGameFrame(nativePrompt, R.attr.ui_theme_lightframe_bitmap);
 +        nativePrompt.setOnClickListener(v -> nativePrompt.setMaxLines(
-+                nativePrompt.getMaxLines() == 3 ? 8 : 3));
-+        nativeStack.addView(nativePrompt);
++                nativePrompt.getMaxLines() == 2 ? 8 : 2));
++
++        FrameLayout questionFrame = new FrameLayout(context);
++        questionFrame.addView(nativePrompt, new FrameLayout.LayoutParams(-1, -2));
++        Button nativeWeb = createAudioButton(context, "Web");
++        nativeWeb.setTextSize(9);
++        nativeWeb.setContentDescription("Show original Duolingo exercise");
++        nativeWeb.setOnClickListener(v -> {
++            forceWeb = true;
++            showNativeOrWeb();
++        });
++        FrameLayout.LayoutParams nativeWebParams = new FrameLayout.LayoutParams(
++                dp(34), dp(22), Gravity.RIGHT | Gravity.TOP);
++        nativeWebParams.setMargins(0, dp(6), dp(6), 0);
++        questionFrame.addView(nativeWeb, nativeWebParams);
++        Button nativeResize = createAudioButton(context, "−");
++        nativeResize.setTextSize(11);
++        nativeResize.setContentDescription("Change Duolingo combat panel height");
++        nativeResize.setOnClickListener(v -> {
++            enlarged = !enlarged;
++            nativeResize.setText(enlarged ? "−" : "+");
++            applyPanelHeight();
++        });
++        FrameLayout.LayoutParams nativeResizeParams = new FrameLayout.LayoutParams(
++                dp(22), dp(22), Gravity.LEFT | Gravity.TOP);
++        nativeResizeParams.setMargins(dp(6), dp(6), 0, 0);
++        questionFrame.addView(nativeResize, nativeResizeParams);
++        nativeStack.addView(questionFrame, new LinearLayout.LayoutParams(-1, -2));
 +
 +        nativeInput = new EditText(context);
-+        nativeInput.setTextColor(Color.rgb(255, 241, 211));
++        nativeInput.setTextColor(Color.rgb(248, 248, 248));
 +        nativeInput.setHintTextColor(Color.rgb(158, 179, 204));
-+        nativeInput.setHint("Enter your answer");
-+        nativeInput.setTextSize(13);
++        nativeInput.setHint("Type answer");
++        nativeInput.setTextSize(16);
 +        nativeInput.setSingleLine(true);
 +        nativeInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
 +        nativeInput.setSelectAllOnFocus(false);
-+        nativeInput.setPadding(dp(6), 0, dp(6), 0);
-+        GradientDrawable answerFrame = new GradientDrawable();
-+        answerFrame.setColor(Color.rgb(13, 25, 39));
-+        answerFrame.setCornerRadius(dp(2));
-+        answerFrame.setStroke(dp(2), Color.rgb(204, 171, 112));
-+        nativeInput.setBackground(answerFrame);
++        nativeInput.setPadding(dp(9), 0, dp(9), 0);
++        applyGameFrame(nativeInput, R.attr.ui_theme_lightframe_bitmap);
 +        nativeInput.setOnEditorActionListener((v, actionId, event) -> {
 +            if (actionId == EditorInfo.IME_ACTION_DONE) {
 +                browser.evaluateJavascript("window.__andorsCombatUiV12&&" +
@@ -1613,13 +1662,18 @@ index 00000000..ba15f9ed
 +            }
 +            @Override public void afterTextChanged(Editable s) { }
 +        });
-+        nativeStack.addView(nativeInput, new LinearLayout.LayoutParams(-1, dp(30)));
++        LinearLayout.LayoutParams inputParams = new LinearLayout.LayoutParams(-1, dp(31));
++        inputParams.setMargins(0, dp(4), 0, 0);
++        nativeStack.addView(nativeInput, inputParams);
 +
 +        nativeSelected = new TextView(context);
-+        nativeSelected.setTextColor(Color.rgb(188, 208, 230));
++        nativeSelected.setTextColor(Color.rgb(248, 248, 248));
 +        nativeSelected.setTypeface(Typeface.MONOSPACE);
-+        nativeSelected.setTextSize(11);
-+        nativeSelected.setPadding(dp(4), dp(2), dp(4), dp(2));
++        nativeSelected.setTextSize(14);
++        nativeSelected.setMinHeight(dp(24));
++        nativeSelected.setGravity(Gravity.CENTER_VERTICAL);
++        nativeSelected.setPadding(dp(9), dp(2), dp(4), dp(2));
++        applyGameFrame(nativeSelected, R.attr.ui_theme_lightframe_bitmap);
 +        nativeSelected.setVisibility(View.GONE);
 +        nativeStack.addView(nativeSelected);
 +
@@ -1629,6 +1683,9 @@ index 00000000..ba15f9ed
 +        nativeScroll.addView(nativeStack);
 +        answers.addView(nativeScroll, new FrameLayout.LayoutParams(-1, -1));
 +        addView(answers, new LinearLayout.LayoutParams(-1, 0, 1));
++        LinearLayout.LayoutParams submitParams = new LinearLayout.LayoutParams(-1, dp(28));
++        submitParams.setMargins(dp(2), dp(1), dp(2), dp(1));
++        addView(submit, submitParams);
 +        updateCounter();
 +    }
 +
@@ -1706,8 +1763,9 @@ index 00000000..ba15f9ed
 +            }
 +            String selected = state == null ? "" : state.optString("selected", "");
 +            boolean showSelected = "wordbank".equals(nextMode) && !selected.isEmpty();
-+            nativeSelected.setText(showSelected ? "ANSWER: " + selected : "");
-+            nativeSelected.setVisibility(showSelected ? View.VISIBLE : View.GONE);
++            nativeSelected.setText(selected);
++            nativeSelected.setVisibility("wordbank".equals(nextMode) ?
++                    View.VISIBLE : View.GONE);
 +        }
 +        showNativeOrWeb();
 +    }
@@ -1771,6 +1829,7 @@ index 00000000..ba15f9ed
 +    private void showNativeOrWeb() {
 +        boolean nativeShown = !"web".equals(nativeMode) && !forceWeb;
 +        nativeScroll.setVisibility(nativeShown ? View.VISIBLE : View.GONE);
++        header.setVisibility(nativeShown ? View.GONE : View.VISIBLE);
 +        // Alpha preserves the WebView's viewport, JS events and feedback
 +        // layout; GONE or a zero-height WebView could break correct detection.
 +        browser.setAlpha(nativeShown ? 0f : 1f);
@@ -1794,6 +1853,14 @@ index 00000000..ba15f9ed
 +        frame.setStroke(dp(1), Color.rgb(120, 145, 176));
 +        button.setBackground(frame);
 +        return button;
++    }
++
++    private void applyGameFrame(View view, int attribute) {
++        TypedValue value = new TypedValue();
++        if (getContext().getTheme().resolveAttribute(attribute, value, true)
++                && value.resourceId != 0) {
++            view.setBackgroundResource(value.resourceId);
++        }
 +    }
 +
 +    private static String loadAsset(Context context, String path) {
@@ -2357,10 +2424,10 @@ HcmV?d00001
 
 diff --git a/AndorsTrail/tools/test_duolingo_combat_skin.js b/AndorsTrail/tools/test_duolingo_combat_skin.js
 new file mode 100644
-index 00000000..7db7b44c
+index 00000000..6d94e9d2
 --- /dev/null
 +++ b/AndorsTrail/tools/test_duolingo_combat_skin.js
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,435 @@
 +/* Minimal offline DOM fixtures for the injected combat-skin JavaScript.
 + * These checks exercise every role classifier without relying on a live
 + * account, Duolingo network responses or private web APIs. */
@@ -2448,6 +2515,11 @@ index 00000000..7db7b44c
 +    if (/^\[data-andors-ui="(?:choice|word|match)"\]$/.test(selector)) {
 +      const role = selector.match(/="(.*?)"/)[1];
 +      return nodes.filter(n => n.getAttribute("data-andors-ui") === role);
++    }
++    if (selector.includes('[data-andors-ui="choice"],') &&
++        selector.includes('[data-andors-ui="match"]')) {
++      return nodes.filter(n => ["choice", "word", "match"]
++        .includes(n.getAttribute("data-andors-ui")));
 +    }
 +    if (selector.includes('[data-test="challenge-translate-prompt"]') &&
 +        selector.includes('blockquote')) return nodes.filter(n =>
@@ -2665,6 +2737,23 @@ index 00000000..7db7b44c
 +assert(missingWord.events.includes("input"));
 +assert(missingWord.events.includes("change"));
 +
++// React can repeat the currently typed answer inside the sentence markup.
++// The combat question must remain the version captured BEFORE typing, or it
++// visually gives away the answer as in the player's screenshot.
++sentenceHolder.cloneNode = () => {
++  const clone = {
++    textContent: "Cảnh sát biết bạn _đang_ ở đâu.",
++    querySelectorAll() { return [{ replaceWith(blank) {
++      clone.textContent = "Cảnh sát biết bạn _đang_ " +
++        blank.textContent + " ở đâu.";
++    } }]; }
++  };
++  return clone;
++};
++assert.equal(nativeTyping.api.nativeState().prompt,
++  "Cảnh sát biết bạn ____ ở đâu.",
++  "Typed text must never become part of the native question prompt");
++
 +const nativeChoicePrompt = element("div", { "data-test": "challenge-prompt" },
 +  "Which word means rat?");
 +let nativeChoiceClicks = 0;
@@ -2710,6 +2799,16 @@ index 00000000..7db7b44c
 +assert.equal(missingTargetFixture.api.nativeState().mode, "web",
 +  "When the real question is unreadable, keep the entire web exercise available");
 +
++const leakedOption = runFixture("/lesson/option-leak", [
++  element("div", { "data-test": "challenge-header" }),
++  element("h2", {}, "Select the correct meaning"),
++  element("span", {}, "nhạc sĩ"),
++  element("button", { "data-test": "challenge-choice" }, "nhạc sĩ"),
++  element("button", { "data-test": "challenge-choice" }, "luật sư")
++]);
++assert.equal(leakedOption.api.nativeState().mode, "web",
++  "An answer duplicated in a span must not be mistaken for the question");
++
 +const nativeMatch = match.api.nativeState();
 +assert.equal(nativeMatch.mode, "matching");
 +assert.equal(nativeMatch.options.length, 4);
@@ -2749,6 +2848,12 @@ index 00000000..7db7b44c
 +assert(panel.includes("columns = 3"),
 +  "Three short multiple-choice answers must fit without clipping the last row");
 +assert(panel.includes("window.__andorsDuoCompact=true"));
++assert(!panel.includes('"Answer: " + preview'),
++  "Never echo the live answer in a visible combat status header");
++assert(panel.includes("R.attr.ui_theme_lightframe_bitmap"),
++  "Question and answer fields should use the same game frames as Anki");
++assert(panel.includes("addView(submit, submitParams)"),
++  "The Check action should be full width beneath the question and input");
 +assert(monitor.includes("window.__andorsDuoCompact?laidOut:shown(b)"),
 +  "The compact layout must not break success detection when Continue scrolls");
 +assert(monitor.includes("el.getClientRects().length===0"),
