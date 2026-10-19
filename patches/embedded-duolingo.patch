@@ -32,7 +32,7 @@ index 25463ca0..853f5e56 100644
          beta {
              manifestPlaceholders icon_name: 'icon_beta', fileproviderPath: 'AndorsTrail.beta2'
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..f3c03471 100644
+index 1e190966..d2d1f975 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
 @@ -2,8 +2,8 @@
@@ -41,8 +41,8 @@ index 1e190966..f3c03471 100644
  	xmlns:android="http://schemas.android.com/apk/res/android" 
 -	android:versionCode="89"
 -	android:versionName="0.8.18"
-+	android:versionCode="92"
-+	android:versionName="0.8.18-duo8"
++	android:versionCode="93"
++	android:versionName="0.8.18-duo9"
  	android:installLocation="auto"
  	>
  
@@ -77,10 +77,10 @@ index 1e190966..f3c03471 100644
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.css b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.css
 new file mode 100644
-index 00000000..22080522
+index 00000000..77fcba7a
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.css
-@@ -0,0 +1,341 @@
+@@ -0,0 +1,359 @@
 +/*
 + * Andor's Trail language-combat skin.
 + *
@@ -282,6 +282,9 @@ index 00000000..22080522
 +html.andors-duo-exercise body {
 +  font-size: 12px !important;
 +  line-height: 1.15 !important;
++  overflow-y: auto !important;
++  overscroll-behavior: contain;
++  padding-bottom: 34px !important;
 +}
 +
 +html.andors-duo-exercise header,
@@ -360,6 +363,21 @@ index 00000000..22080522
 +  margin: 1px 0 !important;
 +}
 +
++/* The selected words/response line needs to remain readable even while the
++ * player scrolls the bank underneath it in the tiny combat viewport. */
++html.andors-duo-exercise [data-andors-layout="selected-answer"] {
++  position: sticky !important;
++  top: 0 !important;
++  z-index: 50 !important;
++  background: #16263a !important;
++  border-bottom: 1px solid #8197b5 !important;
++  min-height: 25px !important;
++  max-height: 64px !important;
++  overflow-y: auto !important;
++  margin: 0 !important;
++  padding: 2px 4px !important;
++}
++
 +html.andors-duo-exercise [data-andors-ui="word"],
 +html.andors-duo-exercise [data-andors-ui="choice"] {
 +  min-height: 27px !important;
@@ -424,20 +442,20 @@ index 00000000..22080522
 +}
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 new file mode 100644
-index 00000000..53cf4f50
+index 00000000..cc6c1a83
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,320 @@
 +(function () {
 +  "use strict";
 +
 +  /*
-+   * Annotate the live Duolingo controls so the companion CSS can present them
-+   * as an RPG encounter. Never clone, replace, reparent or click an answer.
-+   * Duolingo's own handlers must still grade every exercise.
++   * Annotate Duolingo's live controls without cloning/reparenting the answers.
++   * The native Check button may click the original Duolingo action, but only
++   * on a direct player tap. Duolingo still grades every exercise.
 +   */
-+  if (window.__andorsCombatUiV8) {
-+    window.__andorsCombatUiV8.refresh();
++  if (window.__andorsCombatUiV9) {
++    window.__andorsCombatUiV9.refresh();
 +    return;
 +  }
 +
@@ -455,6 +473,60 @@ index 00000000..53cf4f50
 +    progress: /(?:lesson-progress|challenge-progress|progress-bar)/
 +  };
 +  var instruction = /^(?:type what you hear|tap the matching pairs|match the pairs|translate this sentence|write this in (?:english|vietnamese|spanish|french|german)|complete the sentence|listen and (?:respond|type|write)|select the correct (?:translation|answer)|choose the correct (?:translation|answer)|fill in the blank|tap what you hear)[.!?]*$/i;
++
++  function realAction() {
++    var controls = document.querySelectorAll("button,[role=button]");
++    for (var i = controls.length - 1; i >= 0; i--) {
++      var button = controls[i];
++      if (button.disabled || attr(button, "aria-disabled") === "true" ||
++          !button.getClientRects().length) continue;
++      var label = (button.innerText || button.textContent || "").trim();
++      if (/^(?:check|check answer|continue|next|submit|got it|done)$/i.test(label)) {
++        return { button: button, label: label };
++      }
++    }
++    return null;
++  }
++
++  function actionLabel() {
++    var action = realAction();
++    return action ? action.label : "";
++  }
++
++  function activateAction() {
++    // Called only by a user tapping the Android Check/Continue control.
++    // The real web button remains responsible for all validation and XP.
++    var action = realAction();
++    if (!action) return false;
++    action.button.click();
++    return true;
++  }
++
++  function answerPreview() {
++    // Read-only, transient status; no answer text is stored or transmitted.
++    var inputs = document.querySelectorAll(
++      'textarea,input:not([type="hidden"]):not([type="search"]),' +
++      '[contenteditable="true"]'
++    );
++    for (var i = 0; i < inputs.length; i++) {
++      var input = inputs[i];
++      if (attr(input, "type") === "password") continue;
++      var answer = (input.value || input.innerText || "").trim();
++      if (answer) return answer.slice(0, 90);
++    }
++    var selected = document.querySelectorAll(
++      '[data-andors-ui="word"][aria-pressed="true"],' +
++      '[data-andors-ui="word"][aria-selected="true"],' +
++      '[data-andors-ui="choice"][aria-checked="true"],' +
++      '[data-andors-ui="choice"][aria-selected="true"]'
++    );
++    var pieces = [];
++    for (var j = 0; j < selected.length; j++) {
++      var text = (selected[j].innerText || selected[j].textContent || "").trim();
++      if (text) pieces.push(text);
++    }
++    return pieces.join(" ").slice(0, 90);
++  }
 +
 +  function attr(el, name) {
 +    return (el.getAttribute(name) || "").toLowerCase();
@@ -554,10 +626,10 @@ index 00000000..53cf4f50
 +    if (!inExercise) {
 +      root.removeAttribute("data-andors-exercise");
 +      lastType = "none";
-+      window.__andorsCombatUiV8.inExercise = false;
++      window.__andorsCombatUiV9.inExercise = false;
 +      return;
 +    }
-+    window.__andorsCombatUiV8.inExercise = true;
++    window.__andorsCombatUiV9.inExercise = true;
 +
 +    var signals = [];
 +    var words = [];
@@ -609,6 +681,18 @@ index 00000000..53cf4f50
 +
 +    attachWordbankLayout(words);
 +    groupMatches(matches);
++
++    // Keep response/word-bank answer slots in the scrollable viewport. Their
++    // original buttons must remain mounted to preserve undo/selection.
++    var answers = document.querySelectorAll(
++      '[data-test*="answer-container"],[data-test*="response-container"],' +
++      '[data-test*="tap-token-answer"],[data-test*="word-bank-answer"]'
++    );
++    for (var k = 0; k < answers.length; k++) {
++      if (!answers[k].closest('[data-andors-ui="feedback"]')) {
++        answers[k].setAttribute("data-andors-layout", "selected-answer");
++      }
++    }
 +
 +    /* Restrict prompt typography to the upper challenge area. The success
 +     * feedback heading at the bottom needs to keep its original green color,
@@ -675,7 +759,11 @@ index 00000000..53cf4f50
 +  window.addEventListener("popstate", schedule);
 +  window.addEventListener("hashchange", schedule);
 +  window.setInterval(schedule, 2000);
-+  window.__andorsCombatUiV8 = { refresh: refresh, inExercise: false };
++  window.__andorsCombatUiV9 = {
++    refresh: refresh, inExercise: false,
++    actionLabel: actionLabel, activateAction: activateAction,
++    answerPreview: answerPreview
++  };
 +  refresh();
 +})();
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
@@ -855,10 +943,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..2640ce19
+index 00000000..da2e632f
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,324 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -915,13 +1003,14 @@ index 00000000..2640ce19
 +    private final Handler handler = new Handler(Looper.getMainLooper());
 +    private final TextView counter;
 +    private final Button expand;
++    private final Button submit;
 +    private final WebView browser;
 +    private final String combatStyleScript;
 +    private final String combatLayoutScript;
 +    private CorrectAnswerListener correctListener;
 +    private boolean active;
 +    private boolean started;
-+    private boolean enlarged;
++    private boolean enlarged = true;
 +    private boolean inExercise;
 +    private long lastDocumentCount;
 +    private long totalCorrectCount;
@@ -937,7 +1026,9 @@ index 00000000..2640ce19
 +                browser.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
 +                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
 +                        "window.__andorsDuoFeedbackMethod||'none'," +
-+                        "!!(window.__andorsCombatUiV8&&window.__andorsCombatUiV8.inExercise)]", result -> {
++                        "!!(window.__andorsCombatUiV9&&window.__andorsCombatUiV9.inExercise)," +
++                        "window.__andorsCombatUiV9?window.__andorsCombatUiV9.actionLabel():''," +
++                        "window.__andorsCombatUiV9?window.__andorsCombatUiV9.answerPreview():'']", result -> {
 +                    if (!active || generation != documentGeneration) return;
 +                    try {
 +                        JSONArray state = new JSONArray(result);
@@ -961,9 +1052,14 @@ index 00000000..2640ce19
 +                            inExercise = nowInExercise;
 +                            applyPanelHeight();
 +                        }
++                        String actionLabel = state.optString(5, "");
++                        submit.setVisibility(inExercise ? View.VISIBLE : View.GONE);
++                        submit.setEnabled(!actionLabel.isEmpty());
++                        submit.setText(actionLabel.isEmpty() ? "Check" : actionLabel);
++                        String preview = state.optString(6, "");
 +                        lastFeedback = !monitor ? "Connecting"
 +                                : success ? "Correct — attack queued"
-+                                : "Ready for answer";
++                                : preview.isEmpty() ? "Ready for answer" : "Answer: " + preview;
 +                        updateCounter();
 +                    } catch (JSONException ignored) {
 +                        // Navigations can transiently interrupt JavaScript evaluation.
@@ -982,8 +1078,8 @@ index 00000000..2640ce19
 +
 +        String css = loadAsset(context, CSS_ASSET);
 +        combatStyleScript = css.isEmpty() ? "" :
-+                "(function(){var s=document.getElementById('andors-duo-combat-v8');" +
-+                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v8';" +
++                "(function(){var s=document.getElementById('andors-duo-combat-v9');" +
++                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v9';" +
 +                "(document.head||document.documentElement).appendChild(s);}" +
 +                "s.textContent=" + JSONObject.quote(css) + ";})();";
 +        combatLayoutScript = loadAsset(context, JS_ASSET);
@@ -1006,11 +1102,33 @@ index 00000000..2640ce19
 +        counter.setGravity(Gravity.CENTER_VERTICAL);
 +        counter.setSingleLine(true);
 +        labels.addView(counter);
-+        header.addView(labels, new LinearLayout.LayoutParams(0, dp(25), 1));
++        header.addView(labels, new LinearLayout.LayoutParams(0, dp(23), 1));
++
++        submit = new Button(context);
++        submit.setText("Check");
++        submit.setTextSize(10);
++        submit.setTextColor(Color.rgb(255, 242, 210));
++        submit.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
++        submit.setAllCaps(false);
++        submit.setMinHeight(0);
++        submit.setMinWidth(0);
++        submit.setPadding(dp(2), 0, dp(2), 0);
++        GradientDrawable submitFrame = new GradientDrawable(
++                GradientDrawable.Orientation.TOP_BOTTOM,
++                new int[]{Color.rgb(126, 98, 56), Color.rgb(76, 58, 35)});
++        submitFrame.setCornerRadius(dp(2));
++        submitFrame.setStroke(dp(1), Color.rgb(236, 199, 131));
++        submit.setBackground(submitFrame);
++        submit.setVisibility(View.GONE);
++        submit.setOnClickListener(v -> {
++            if (inExercise) browser.evaluateJavascript(
++                    "window.__andorsCombatUiV9&&window.__andorsCombatUiV9.activateAction()", null);
++        });
++        header.addView(submit, new LinearLayout.LayoutParams(dp(65), dp(23)));
 +
 +        expand = new Button(context);
 +        expand.setText("Expand");
-+        expand.setTextSize(10);
++        expand.setTextSize(11);
 +        expand.setTextColor(Color.rgb(244, 226, 191));
 +        expand.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
 +        expand.setAllCaps(false);
@@ -1027,12 +1145,13 @@ index 00000000..2640ce19
 +            enlarged = !enlarged;
 +            applyPanelHeight();
 +        });
-+        header.addView(expand, new LinearLayout.LayoutParams(dp(54), dp(24)));
++        header.addView(expand, new LinearLayout.LayoutParams(dp(26), dp(23)));
 +        addView(header);
 +
 +        browser = new WebView(context);
 +        browser.setBackgroundColor(Color.rgb(23, 32, 39));
-+        browser.setVerticalScrollBarEnabled(false);
++        // Let players see when the exercise itself needs scrolling.
++        browser.setVerticalScrollBarEnabled(true);
 +        browser.getSettings().setJavaScriptEnabled(true);
 +        browser.getSettings().setDomStorageEnabled(true);
 +        browser.getSettings().setMediaPlaybackRequiresUserGesture(false);
@@ -1123,7 +1242,8 @@ index 00000000..2640ce19
 +        final int desired;
 +        if (inExercise) {
 +            // Size this relative to the actual enemy info row, not the phone.
-+            // Normal is 1.5 enemy rows; the user can expand to 2, never more.
++            // Start at the two-row limit so the answer field and word-bank
++            // selection are not clipped; the small button can shrink it.
 +            View enemyRow = getRootView().findViewById(R.id.combatview_monsterbar);
 +            int enemyHeight = enemyRow == null ? 0 : enemyRow.getHeight();
 +            if (enemyHeight <= 0) enemyHeight = dp(53);
@@ -1137,7 +1257,7 @@ index 00000000..2640ce19
 +            existing.height = desired;
 +            setLayoutParams(existing);
 +        }
-+        expand.setText(enlarged ? "− Size" : "+ Size");
++        expand.setText(enlarged ? "−" : "+");
 +    }
 +
 +    private int dp(int size) {
@@ -1662,10 +1782,10 @@ HcmV?d00001
 
 diff --git a/AndorsTrail/tools/test_duolingo_combat_skin.js b/AndorsTrail/tools/test_duolingo_combat_skin.js
 new file mode 100644
-index 00000000..446fed14
+index 00000000..ed255ba8
 --- /dev/null
 +++ b/AndorsTrail/tools/test_duolingo_combat_skin.js
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,234 @@
 +/* Minimal offline DOM fixtures for the injected combat-skin JavaScript.
 + * These checks exercise every role classifier without relying on a live
 + * account, Duolingo network responses or private web APIs. */
@@ -1704,6 +1824,7 @@ index 00000000..446fed14
 +    },
 +    getBoundingClientRect() { return { width: 150, height: 40,
 +      top, bottom: top + 40 }; },
++    getClientRects() { return [this.getBoundingClientRect()]; },
 +    closest(selector) {
 +      if (selector === '[data-andors-ui="feedback"]') {
 +        let parent = this.parentElement;
@@ -1742,6 +1863,12 @@ index 00000000..446fed14
 +    if (selector === "h1,h2,h3") return nodes.filter(n => /^h[123]$/.test(n.tag));
 +    if (selector === "img,svg,canvas") return nodes.filter(n =>
 +      ["img", "svg", "canvas"].includes(n.tag));
++    if (selector === "button,[role=button]") return nodes.filter(n =>
++      n.tag === "button" || n.getAttribute("role") === "button");
++    if (selector.includes('[data-andors-ui="word"][aria-pressed="true"]')) {
++      return nodes.filter(n => n.getAttribute("data-andors-ui") === "word" &&
++        n.getAttribute("aria-pressed") === "true");
++    }
 +    if (selector.startsWith("textarea,input:")) return nodes.filter(n =>
 +      n.tag === "textarea" || n.tag === "input" ||
 +      n.getAttribute("contenteditable") === "true");
@@ -1774,7 +1901,7 @@ index 00000000..446fed14
 +  vm.runInNewContext(source, context);
 +  vm.runInNewContext(source, context); // Must be idempotent on SPA reinjection.
 +  assert.equal(observerCount, 1);
-+  return { root, classes, nodes };
++  return { root, classes, nodes, api: context.window.__andorsCombatUiV9 };
 +}
 +
 +const home = runFixture("/learn", [
@@ -1819,6 +1946,8 @@ index 00000000..446fed14
 +assert.equal(wordbank.root.getAttribute("data-andors-exercise"), "wordbank");
 +assert.equal(tokenParent.getAttribute("data-andors-layout"), "wordbank");
 +assert(wordTokens.every(token => token.getAttribute("data-andors-ui") === "word"));
++wordTokens[0].setAttribute("aria-pressed", "true");
++assert.equal(wordbank.api.answerPreview(), "Word 0");
 +
 +const input = element("textarea", { "data-test": "challenge-text-input" });
 +const check = element("button", { "data-test": "challenge-check-button" }, "Check");
@@ -1857,6 +1986,18 @@ index 00000000..446fed14
 +]);
 +assert.equal(audioButton.getAttribute("data-andors-ui"), "audio");
 +
++let nativeSubmissionCount = 0;
++const originalCheck = element("button", {}, "Check");
++originalCheck.click = () => nativeSubmissionCount++;
++const native = runFixture("/lesson/6", [
++  element("div", { "data-test": "challenge-header" }), originalCheck
++]);
++assert.equal(native.api.actionLabel(), "Check");
++assert.equal(nativeSubmissionCount, 0, "Page refresh must never submit automatically");
++assert.equal(native.api.activateAction(), true);
++assert.equal(nativeSubmissionCount, 1,
++  "A native player tap must delegate to the unchanged original Check button");
++
 +assert(css.includes('[data-andors-ui="audio"]'));
 +assert(css.includes('[data-andors-ui="match"]'));
 +assert(css.includes('[data-andors-ui="word"]'));
@@ -1865,11 +2006,17 @@ index 00000000..446fed14
 +assert(css.includes('[data-andors-ui="instruction"]'));
 +assert(css.includes('[data-andors-chrome="hide"]'));
 +assert(css.includes('[data-andors-layout="matches"]'));
++assert(css.includes('[data-andors-layout="selected-answer"]'));
 +assert(panel.includes("enemyHeight * (enlarged ? 2.0f : 1.5f)"));
++assert(panel.includes("private boolean enlarged = true"));
++assert(panel.includes("window.__andorsCombatUiV9.activateAction()"));
 +assert(panel.includes("window.__andorsDuoCompact=true"));
 +assert(monitor.includes("window.__andorsDuoCompact?laidOut:shown(b)"),
 +  "The compact layout must not break success detection when Continue scrolls");
 +assert(monitor.includes("el.getClientRects().length===0"),
 +  "Visible compact feedback must be counted even above the old footer zone");
-+assert(!/\.click\s*\(/.test(source), "Skin must not submit an answer itself");
++const refreshCode = source.slice(source.indexOf("function refresh()"),
++  source.indexOf("function schedule()"));
++assert(!/\.click\s*\(/.test(refreshCode),
++  "Refreshing the skin must never submit an answer automatically");
 +console.log("Duolingo combat skin: home, matching, word bank, typing, choices, audio and reinjection passed.");
