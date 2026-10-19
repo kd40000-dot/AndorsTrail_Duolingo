@@ -64,6 +64,42 @@ index 1e190966..73c2d8e5 100644
  		<activity
  			android:exported="true"
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
+diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
+index a0148fab..6bd24e91 100644
+--- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
++++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
+@@ -33,6 +33,7 @@ import com.gpl.rpg.AndorsTrail.controller.listeners.CombatActionListener;
+ import com.gpl.rpg.AndorsTrail.controller.listeners.CombatTurnListener;
+ import com.gpl.rpg.AndorsTrail.controller.listeners.PlayerMovementListener;
+ import com.gpl.rpg.AndorsTrail.controller.listeners.WorldEventListener;
++import com.gpl.rpg.AndorsTrail.duolingo.DuolingoCombatPanel;
+ import com.gpl.rpg.AndorsTrail.model.ability.ActorCondition;
+ import com.gpl.rpg.AndorsTrail.model.ability.ActorConditionEffect;
+ import com.gpl.rpg.AndorsTrail.model.actor.Monster;
+@@ -97,6 +98,7 @@ public final class MainActivity
+ 		mainview = (MainView) findViewById(R.id.main_mainview);
+ 		statusview = (StatusView) findViewById(R.id.main_statusview);
+ 		combatview = (CombatView) findViewById(R.id.main_combatview);
++		combatview.attachDuolingoPanel((DuolingoCombatPanel) findViewById(R.id.main_duolingo_panel));
+ 		quickitemview = (QuickitemView) findViewById(R.id.main_quickitemview);
+ 		activeConditions = new DisplayActiveActorConditionIcons(controllers, world, this, (RelativeLayout) findViewById(R.id.statusview_activeconditions));
+ 		activeConditions.setTarget(world.model.player);
+@@ -139,6 +141,7 @@ public final class MainActivity
+ 		toolboxview.bringToFront();
+ 		combatview.bringToFront();
+ 		statusview.bringToFront();
++		findViewById(R.id.main_duolingo_panel).bringToFront();
+ 	}
+ 
+ 	@Override
+@@ -222,6 +225,7 @@ public final class MainActivity
+ 		if (world.model.statistics.isDead()) this.finish();
+ 		else {
+ 			controllers.gameRoundController.onMainActivityResumed();
++			combatview.ensureDuolingoPanelVisible();
+ 			// It's possible the pause() quicksave was deferred because the map was in transition.  If
+ 			// so, we do it now so the new map is saved.
+ 			saveDeferredQuicksaveIfNeeded();
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
 index 8a3a1d67..620784cd 100644
 --- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
@@ -189,7 +225,7 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..eae3aaf9
+index 00000000..746133ff
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 @@ -0,0 +1,214 @@
@@ -380,7 +416,7 @@ index 00000000..eae3aaf9
 +    }
 +
 +    private void updateCounter() {
-+        counter.setText("Duolingo · " + totalCorrectCount + " correct · " + lastFeedback);
++        counter.setText("Duo combat · " + totalCorrectCount + " correct · " + lastFeedback);
 +    }
 +
 +    private void applyPanelHeight() {
@@ -662,7 +698,7 @@ index 00000000..c157d80e
 +    }
 +}
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
-index 6d934235..842ce257 100644
+index 6d934235..43dce726 100644
 --- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
 @@ -19,6 +19,7 @@ import com.gpl.rpg.AndorsTrail.AndorsTrailPreferences;
@@ -678,31 +714,39 @@ index 6d934235..842ce257 100644
  	private final RangeBar playerAPBar;
  	private final Button attackMoveButton;
 +	private final Button duolingoToggleButton;
-+	private final DuolingoCombatPanel duolingoPanel;
++	private DuolingoCombatPanel duolingoPanel;
  	private final Button endTurnButton;
  	private final Button fleeButton;
  	private final ImageButton monsterInfo;
-@@ -85,6 +88,19 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+@@ -61,6 +64,7 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+ 
+ 	private Monster currentMonster;
+ 	private boolean conditionsBarToggled = false;
++	private boolean duolingoHiddenByUser = false;
+ 
+ 	public CombatView(final Context context, AttributeSet attr) {
+ 		super(context, attr);
+@@ -85,6 +89,19 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
  			MainView mv = ((MainActivity) getContext()).getMainView();
  			mv.post(mv::requestFocus);
  		});
-+		duolingoPanel = findViewById(R.id.combatview_duolingo_panel);
-+		duolingoPanel.setCorrectAnswerListener(c::onDuolingoCorrectAnswer);
 +		duolingoToggleButton = findViewById(R.id.combatview_duolingo);
 +		duolingoToggleButton.setOnClickListener(v -> {
++			if (duolingoPanel == null) return;
 +			if (duolingoPanel.isShowingLessons()) {
++				duolingoHiddenByUser = true;
 +				duolingoPanel.hideLessons();
 +				c.setDuolingoCombatEnabled(false);
 +			} else {
-+				c.setDuolingoCombatEnabled(true);
-+				duolingoPanel.showLessons();
++				duolingoHiddenByUser = false;
++				ensureDuolingoPanelVisible();
 +			}
 +			updateDuolingoButton();
 +		});
  
  		endTurnButton = findViewById(R.id.combatview_endturn);
  		//Enable marquee if text is too long.
-@@ -131,6 +147,7 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+@@ -131,6 +148,7 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
  		
  		activeConditionsBar = (RelativeLayout) findViewById(R.id.combatview_activeconditions);
  		activeConditions = new DisplayActiveActorConditionIcons(controllers, world, context, activeConditionsBar);
@@ -710,33 +754,57 @@ index 6d934235..842ce257 100644
  		
  		
  //		monsterBar.setBackgroundColor(res.getColor(color.transparent));
-@@ -172,6 +189,10 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+@@ -172,6 +190,27 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
  		if (conditionsBarToggled) showConditionsBar();
  		else hideConditionsBar();
  	}
 +
 +	private void updateDuolingoButton() {
-+		duolingoToggleButton.setText(duolingoPanel.isShowingLessons() ? "Hide Duo" : "Duo");
++		duolingoToggleButton.setText(duolingoPanel != null && duolingoPanel.isShowingLessons() ? "Hide Duo" : "Duo");
++	}
++
++	/** The lesson overlay belongs to the main screen, not the compact combat toolbar. */
++	public void attachDuolingoPanel(DuolingoCombatPanel panel) {
++		duolingoPanel = panel;
++		panel.setCorrectAnswerListener(controllers.combatController::onDuolingoCorrectAnswer);
++		ensureDuolingoPanelVisible();
++		updateDuolingoButton();
++	}
++
++	/** Also called when resuming a saved battle, which may not emit a new start event. */
++	public void ensureDuolingoPanelVisible() {
++		if (duolingoPanel == null || !world.model.uiSelections.isInCombat || duolingoHiddenByUser) return;
++		controllers.combatController.setDuolingoCombatEnabled(true);
++		duolingoPanel.showLessons();
++		duolingoPanel.bringToFront();
++		updateDuolingoButton();
 +	}
  	
  	private void updateTurnInfo(Monster currentActiveMonster) {
  		if (currentActiveMonster != null) {
-@@ -336,10 +357,15 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+@@ -336,16 +375,22 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
  	public void onCombatStarted() {
  		show();
  		updateTurnInfo(null);
-+		controllers.combatController.setDuolingoCombatEnabled(true);
-+		duolingoPanel.showLessons();
-+		updateDuolingoButton();
++		duolingoHiddenByUser = false;
++		ensureDuolingoPanelVisible();
  	}
  
  	@Override
  	public void onCombatEnded() {
-+		duolingoPanel.hideLessons();
++		if (duolingoPanel != null) duolingoPanel.hideLessons();
++		duolingoHiddenByUser = false;
 +		updateDuolingoButton();
  		hide();
  	}
  
+ 	@Override
+ 	public void onNewPlayerTurn() {
+ 		updateTurnInfo(null);
++		ensureDuolingoPanelVisible();
+ 	}
+ 
+ 	@Override
 diff --git a/AndorsTrail/app/src/main/res/values/duolingo_strings.xml b/AndorsTrail/app/src/main/res/values/duolingo_strings.xml
 new file mode 100644
 index 00000000..f0f13944
@@ -748,7 +816,7 @@ index 00000000..f0f13944
 +    <string name="duolingo_detector_description">Experimental Duolingo integration: detects visible correct-answer feedback. Enable only to test the integration; no answer text is stored.</string>
 +</resources>
 diff --git a/AndorsTrail/res/layout/combatview.xml b/AndorsTrail/res/layout/combatview.xml
-index 1b670f50..76e84a38 100644
+index 1b670f50..bea32cca 100644
 --- a/AndorsTrail/res/layout/combatview.xml
 +++ b/AndorsTrail/res/layout/combatview.xml
 @@ -30,6 +30,15 @@
@@ -767,23 +835,32 @@ index 1b670f50..76e84a38 100644
              <com.gpl.rpg.AndorsTrail.view.RangeBar
                  android:id="@+id/combatview_status"
                  android:layout_width="0dp"
-@@ -134,4 +143,14 @@
+@@ -134,4 +143,4 @@
              android:focusable="false"/>
      </RelativeLayout>
  
 -</merge>
 \ No newline at end of file
-+    <!-- Real Duolingo exercises in the battle UI. The game remains visible
-+         behind the compact quiz panel, as in the Anki combat integration. -->
-+    <com.gpl.rpg.AndorsTrail.duolingo.DuolingoCombatPanel
-+        android:id="@+id/combatview_duolingo_panel"
-+        style="@style/AndorsTrail_Style_StdFrame"
-+        android:layout_width="match_parent"
-+        android:layout_height="420dp"
-+        android:layout_below="@id/combatview_activeconditions_cliparea"
-+        android:visibility="gone" />
-+
 +</merge>
+diff --git a/AndorsTrail/res/layout/main.xml b/AndorsTrail/res/layout/main.xml
+index 4b421cb7..0607e0a9 100644
+--- a/AndorsTrail/res/layout/main.xml
++++ b/AndorsTrail/res/layout/main.xml
+@@ -82,4 +82,14 @@
+ 		android:visibility="gone"
+ 		/>
+ 
++	<!-- Keep Duolingo above the map as a real in-battle panel. A sibling of
++	     MainView cannot be clipped by the compact combat toolbar's bounds. -->
++	<com.gpl.rpg.AndorsTrail.duolingo.DuolingoCombatPanel
++		android:id="@+id/main_duolingo_panel"
++		style="@style/AndorsTrail_Style_StdFrame"
++		android:layout_width="match_parent"
++		android:layout_height="420dp"
++		android:layout_below="@id/main_combatview"
++		android:visibility="gone" />
++
+ </RelativeLayout>
 diff --git a/AndorsTrail/res/values/duolingo_app_name.xml b/AndorsTrail/res/values/duolingo_app_name.xml
 new file mode 100644
 index 00000000..ecee64f4
