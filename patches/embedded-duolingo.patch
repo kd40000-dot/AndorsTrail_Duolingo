@@ -32,7 +32,7 @@ index 25463ca0..853f5e56 100644
          beta {
              manifestPlaceholders icon_name: 'icon_beta', fileproviderPath: 'AndorsTrail.beta2'
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..edebd63e 100644
+index 1e190966..781b4588 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
 @@ -2,8 +2,8 @@
@@ -41,8 +41,8 @@ index 1e190966..edebd63e 100644
  	xmlns:android="http://schemas.android.com/apk/res/android" 
 -	android:versionCode="89"
 -	android:versionName="0.8.18"
-+	android:versionCode="94"
-+	android:versionName="0.8.18-duo10"
++	android:versionCode="95"
++	android:versionName="0.8.18-duo11"
  	android:installLocation="auto"
  	>
  
@@ -449,10 +449,10 @@ index 00000000..41a372c3
 +}
 diff --git a/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
 new file mode 100644
-index 00000000..c393b36f
+index 00000000..24e8cac0
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/assets/duolingo/andors-combat.js
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,566 @@
 +(function () {
 +  "use strict";
 +
@@ -461,8 +461,8 @@ index 00000000..c393b36f
 +   * The native Check button may click the original Duolingo action, but only
 +   * on a direct player tap. Duolingo still grades every exercise.
 +   */
-+  if (window.__andorsCombatUiV10) {
-+    window.__andorsCombatUiV10.refresh();
++  if (window.__andorsCombatUiV11) {
++    window.__andorsCombatUiV11.refresh();
 +    return;
 +  }
 +
@@ -473,6 +473,8 @@ index 00000000..c393b36f
 +  var mirroredQuestion = null;
 +  var questionValue = "";
 +  var mirroredAudio = [];
++  var nativeTargets = [];
++  var nativeInput = null;
 +  var roles = {
 +    word: /(?:tap-token|word-bank|wordbank|token-button|token-item)/,
 +    match: /(?:match|pair)/,
@@ -482,7 +484,7 @@ index 00000000..c393b36f
 +    feedback: /(?:challenge-footer|feedback|result-panel|answer-feedback)/,
 +    progress: /(?:lesson-progress|challenge-progress|progress-bar)/
 +  };
-+  var instruction = /^(?:type what you hear|tap the matching pairs|match the pairs|translate this sentence|write this in (?:english|vietnamese|spanish|french|german)|complete the sentence|listen and (?:respond|type|write)|select the correct (?:translation|answer)|choose the correct (?:translation|answer)|fill in the blank|tap what you hear)[.!?]*$/i;
++  var instruction = /^(?:type what you hear|type the missing word|tap the matching pairs|match the pairs|translate this sentence|write this in (?:english|vietnamese|spanish|french|german)|complete the sentence|listen and (?:respond|type|write)|select the correct (?:translation|answer)|choose the correct (?:translation|answer)|fill in the blank|tap what you hear)[.!?]*$/i;
 +
 +  function realAction() {
 +    var controls = document.querySelectorAll("button,[role=button]");
@@ -547,6 +549,152 @@ index 00000000..c393b36f
 +    var original = mirroredAudio[index];
 +    if (!original || !original.isConnected) return false;
 +    original.click();
++    return true;
++  }
++
++  /* Read the real page's answer nodes, but render known exercise types using
++   * Android controls. Every tap/keystroke is forwarded to the original DOM;
++   * this never implements Duolingo grading or fabricates correct answers. */
++  function mainPrompt() {
++    var candidates = document.querySelectorAll(
++      '[data-test="challenge-translate-prompt"],' +
++      '[data-test="challenge-prompt"],' +
++      '[data-test="challenge-sentence"],' +
++      '[data-test="challenge-phrase"],' +
++      '[data-test="challenge-text"],blockquote,h1,h2,h3'
++    );
++    for (var i = 0; i < candidates.length; i++) {
++      var node = candidates[i];
++      if (node.closest('button,[role=button],[data-andors-ui="feedback"]')) continue;
++      if (node.querySelector('input,textarea,button,[role=button]')) continue;
++      var value = (node.innerText || node.textContent || "")
++        .replace(/\s+/g, " ").trim();
++      if (value.length >= 3 && value.length <= 220 && !instruction.test(value) &&
++          !/^(?:correct|great|nice|excellent|well done)[.!?]*$/i.test(value)) {
++        return value;
++      }
++    }
++    return "";
++  }
++
++  function answerInput() {
++    var inputs = document.querySelectorAll(
++      'textarea,input:not([type="hidden"]):not([type="search"]),' +
++      '[contenteditable="true"]'
++    );
++    var found = null;
++    for (var i = 0; i < inputs.length; i++) {
++      var input = inputs[i];
++      if (attr(input, "type") === "password" || input.disabled ||
++          input.closest('[data-andors-ui="feedback"],header,nav')) continue;
++      if (!input.getClientRects().length) continue;
++      if (found) return null; // Multiple blanks need Duolingo's original UI.
++      found = input;
++    }
++    return found;
++  }
++
++  function sentenceAroundInput(input) {
++    if (!input) return "";
++    var host = input.parentElement;
++    // Reconstruct just the sentence surrounding one HTML input. Cloning is
++    // read-only and avoids reparenting or disturbing React's real controls.
++    for (var depth = 0; host && depth < 6; depth++, host = host.parentElement) {
++      if (host === document.body || host.querySelector('button,[role=button]')) break;
++      var copy = host.cloneNode(true);
++      var blanks = copy.querySelectorAll('input,textarea,[contenteditable="true"]');
++      if (blanks.length !== 1) continue;
++      blanks[0].replaceWith(document.createTextNode(' ____ '));
++      var caption = (copy.textContent || "").replace(/\s+/g, " ").trim();
++      var context = caption.replace('____', '').trim();
++      if (caption.includes('____') && context.length >= 8 &&
++          context.length <= 180 && /\s/.test(context)) return caption;
++    }
++    return "";
++  }
++
++  function nativeState() {
++    nativeTargets = [];
++    nativeInput = null;
++    var state = { mode: "web", prompt: "", input: "", multiline: false,
++      options: [], selected: "" };
++    if (!window.__andorsCombatUiV11.inExercise) return state;
++
++    var input = answerInput();
++    if (input) {
++      var sentence = sentenceAroundInput(input);
++      var prompt = sentence || mainPrompt();
++      if (prompt.length >= 8) {
++        nativeInput = input;
++        state.mode = "typing";
++        state.prompt = prompt;
++        state.input = input.value || input.innerText || "";
++        state.multiline = input.tagName === "TEXTAREA";
++      }
++      return state;
++    }
++
++    var mode = lastType;
++    if (["choices", "wordbank", "matching"].indexOf(mode) < 0) return state;
++    var role = mode === "choices" ? "choice" : mode === "wordbank" ? "word" : "match";
++    var candidates = document.querySelectorAll('[data-andors-ui="' + role + '"]');
++    var promptText = mainPrompt();
++    if (mode === "matching" && !promptText) promptText = "Match the pairs";
++    if (mode === "wordbank" && !promptText && mirroredAudio.length) {
++      promptText = "Listen and choose the words";
++    }
++    if (promptText.length < 3 || candidates.length < 2 || candidates.length > 24) return state;
++    var options = [];
++    for (var i = 0; i < candidates.length; i++) {
++      var control = candidates[i];
++      if (control.closest('[data-andors-ui="feedback"]')) return state;
++      var label = (control.innerText || control.textContent || "")
++        .trim().replace(/\s+/g, " ");
++      // Image, audio-only and rich interactive options must stay on the web.
++      if (!label || label.length > 78 ||
++          control.querySelector('input,textarea,img,canvas,[contenteditable="true"]')) {
++        return state;
++      }
++      options.push({ id: i, text: label, disabled: !!control.disabled ||
++          attr(control, "aria-disabled") === "true", selected:
++          ["aria-pressed", "aria-selected", "aria-checked"].some(function (a) {
++            return attr(control, a) === "true";
++          }) });
++      nativeTargets.push(control);
++    }
++    state.mode = mode;
++    state.prompt = promptText;
++    state.options = options;
++    state.selected = answerPreview();
++    return state;
++  }
++
++  function nativeTap(index) {
++    var target = nativeTargets[index];
++    if (!target || !target.isConnected || target.disabled ||
++        attr(target, "aria-disabled") === "true") return false;
++    target.click();
++    return true;
++  }
++
++  function nativeSetText(text) {
++    var target = nativeInput;
++    if (!target || !target.isConnected || typeof text !== "string") return false;
++    if (target.getAttribute("contenteditable") === "true") {
++      target.textContent = text;
++    } else {
++      // React's input value tracker requires the prototype setter plus an
++      // input event for its real state and Check validation to update.
++      var oldValue = target.value || "";
++      var prototype = target.tagName === "TEXTAREA" ?
++        HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
++      var descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
++      if (!descriptor || !descriptor.set) return false;
++      descriptor.set.call(target, text);
++      if (target._valueTracker) target._valueTracker.setValue(oldValue);
++    }
++    target.dispatchEvent(new Event("input", { bubbles: true }));
++    target.dispatchEvent(new Event("change", { bubbles: true }));
 +    return true;
 +  }
 +
@@ -718,7 +866,7 @@ index 00000000..c393b36f
 +    if (!inExercise) {
 +      root.removeAttribute("data-andors-exercise");
 +      lastType = "none";
-+      window.__andorsCombatUiV10.inExercise = false;
++      window.__andorsCombatUiV11.inExercise = false;
 +      if (mirroredQuestion && mirroredQuestion.isConnected) {
 +        mirroredQuestion.removeAttribute("data-andors-mirror");
 +      }
@@ -730,7 +878,7 @@ index 00000000..c393b36f
 +      mirroredAudio = [];
 +      return;
 +    }
-+    window.__andorsCombatUiV10.inExercise = true;
++    window.__andorsCombatUiV11.inExercise = true;
 +
 +    var signals = [];
 +    var words = [];
@@ -862,11 +1010,12 @@ index 00000000..c393b36f
 +  window.addEventListener("popstate", schedule);
 +  window.addEventListener("hashchange", schedule);
 +  window.setInterval(schedule, 2000);
-+  window.__andorsCombatUiV10 = {
++  window.__andorsCombatUiV11 = {
 +    refresh: refresh, inExercise: false,
 +    actionLabel: actionLabel, activateAction: activateAction,
 +    answerPreview: answerPreview, questionText: questionText,
-+    audioCount: audioCount, playAudio: playAudio
++    audioCount: audioCount, playAudio: playAudio,
++    nativeState: nativeState, nativeTap: nativeTap, nativeSetText: nativeSetText
 +  };
 +  refresh();
 +})();
@@ -1047,10 +1196,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..3dcd4b0d
+index 00000000..b4740860
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,391 @@
+@@ -0,0 +1,585 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -1060,18 +1209,24 @@ index 00000000..3dcd4b0d
 +import android.graphics.drawable.GradientDrawable;
 +import android.os.Handler;
 +import android.os.Looper;
++import android.text.Editable;
++import android.text.TextWatcher;
 +import android.util.Log;
 +import android.util.AttributeSet;
 +import android.view.Gravity;
 +import android.view.View;
++import android.view.inputmethod.EditorInfo;
 +import android.webkit.CookieManager;
 +import android.webkit.WebChromeClient;
 +import android.webkit.WebResourceRequest;
 +import android.webkit.WebView;
 +import android.webkit.WebViewClient;
 +import android.widget.Button;
++import android.widget.EditText;
++import android.widget.FrameLayout;
 +import android.widget.LinearLayout;
 +import android.widget.RelativeLayout;
++import android.widget.ScrollView;
 +import android.widget.TextView;
 +
 +import org.json.JSONArray;
@@ -1112,7 +1267,13 @@ index 00000000..3dcd4b0d
 +    private final Button playSlowAudio;
 +    private final Button expand;
 +    private final Button submit;
++    private final Button webToggle;
 +    private final WebView browser;
++    private final ScrollView nativeScroll;
++    private final TextView nativePrompt;
++    private final EditText nativeInput;
++    private final LinearLayout nativeOptions;
++    private final TextView nativeSelected;
 +    private final String combatStyleScript;
 +    private final String combatLayoutScript;
 +    private CorrectAnswerListener correctListener;
@@ -1120,6 +1281,11 @@ index 00000000..3dcd4b0d
 +    private boolean started;
 +    private boolean enlarged = true;
 +    private boolean inExercise;
++    private boolean forceWeb;
++    private boolean updatingInput;
++    private String nativeMode = "web";
++    private String nativeExerciseKey = "";
++    private String nativeOptionsSignature = "";
 +    private long lastDocumentCount;
 +    private long totalCorrectCount;
 +    private int documentGeneration;
@@ -1134,11 +1300,12 @@ index 00000000..3dcd4b0d
 +                browser.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
 +                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
 +                        "window.__andorsDuoFeedbackMethod||'none'," +
-+                        "!!(window.__andorsCombatUiV10&&window.__andorsCombatUiV10.inExercise)," +
-+                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.actionLabel():''," +
-+                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.answerPreview():''," +
-+                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.questionText():''," +
-+                        "window.__andorsCombatUiV10?window.__andorsCombatUiV10.audioCount():0]", result -> {
++                        "!!(window.__andorsCombatUiV11&&window.__andorsCombatUiV11.inExercise)," +
++                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.actionLabel():''," +
++                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.answerPreview():''," +
++                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.questionText():''," +
++                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.audioCount():0," +
++                        "window.__andorsCombatUiV11?window.__andorsCombatUiV11.nativeState():null]", result -> {
 +                    if (!active || generation != documentGeneration) return;
 +                    try {
 +                        JSONArray state = new JSONArray(result);
@@ -1169,12 +1336,16 @@ index 00000000..3dcd4b0d
 +                        String preview = state.optString(6, "");
 +                        String newQuestion = state.optString(7, "");
 +                        int audioCount = state.optInt(8, 0);
-+                        question.setText(newQuestion);
-+                        question.setVisibility(newQuestion.isEmpty() ? View.GONE : View.VISIBLE);
++                        updateNativeUi(state.optJSONObject(9));
++                        boolean nativeShown = !"web".equals(nativeMode) && !forceWeb;
++                        question.setText(nativeShown ? "" : newQuestion);
++                        question.setVisibility(nativeShown || newQuestion.isEmpty() ?
++                                View.GONE : View.VISIBLE);
 +                        playAudio.setVisibility(audioCount > 0 ? View.VISIBLE : View.GONE);
 +                        playSlowAudio.setVisibility(audioCount > 1 ? View.VISIBLE : View.GONE);
 +                        questionBar.setVisibility(inExercise &&
-+                                (!newQuestion.isEmpty() || audioCount > 0) ? View.VISIBLE : View.GONE);
++                                ((!nativeShown && !newQuestion.isEmpty()) || audioCount > 0) ?
++                                View.VISIBLE : View.GONE);
 +                        lastFeedback = !monitor ? "Connecting"
 +                                : success ? "Correct — attack queued"
 +                                : preview.isEmpty() ? "Ready for answer" : "Answer: " + preview;
@@ -1196,8 +1367,8 @@ index 00000000..3dcd4b0d
 +
 +        String css = loadAsset(context, CSS_ASSET);
 +        combatStyleScript = css.isEmpty() ? "" :
-+                "(function(){var s=document.getElementById('andors-duo-combat-v10');" +
-+                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v10';" +
++                "(function(){var s=document.getElementById('andors-duo-combat-v11');" +
++                "if(!s){s=document.createElement('style');s.id='andors-duo-combat-v11';" +
 +                "(document.head||document.documentElement).appendChild(s);}" +
 +                "s.textContent=" + JSONObject.quote(css) + ";})();";
 +        combatLayoutScript = loadAsset(context, JS_ASSET);
@@ -1242,9 +1413,19 @@ index 00000000..3dcd4b0d
 +        submit.setVisibility(View.GONE);
 +        submit.setOnClickListener(v -> {
 +            if (inExercise) browser.evaluateJavascript(
-+                    "window.__andorsCombatUiV10&&window.__andorsCombatUiV10.activateAction()", null);
++                    "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.activateAction()", null);
 +        });
 +        header.addView(submit, new LinearLayout.LayoutParams(dp(65), dp(23)));
++
++        webToggle = createAudioButton(context, "Web");
++        webToggle.setTextSize(10);
++        webToggle.setVisibility(View.GONE);
++        webToggle.setContentDescription("Switch between the game controls and the original lesson");
++        webToggle.setOnClickListener(v -> {
++            forceWeb = !forceWeb;
++            showNativeOrWeb();
++        });
++        header.addView(webToggle, new LinearLayout.LayoutParams(dp(36), dp(23)));
 +
 +        expand = new Button(context);
 +        expand.setText("Expand");
@@ -1292,13 +1473,13 @@ index 00000000..3dcd4b0d
 +        playAudio = createAudioButton(context, "▶");
 +        playAudio.setContentDescription("Play Duolingo question audio");
 +        playAudio.setOnClickListener(v -> browser.evaluateJavascript(
-+                "window.__andorsCombatUiV10&&window.__andorsCombatUiV10.playAudio(0)", null));
++                "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.playAudio(0)", null));
 +        questionBar.addView(playAudio, new LinearLayout.LayoutParams(dp(34), dp(27)));
 +
 +        playSlowAudio = createAudioButton(context, "½×");
 +        playSlowAudio.setContentDescription("Play Duolingo question audio slowly");
 +        playSlowAudio.setOnClickListener(v -> browser.evaluateJavascript(
-+                "window.__andorsCombatUiV10&&window.__andorsCombatUiV10.playAudio(1)", null));
++                "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.playAudio(1)", null));
 +        questionBar.addView(playSlowAudio, new LinearLayout.LayoutParams(dp(34), dp(27)));
 +        addView(questionBar);
 +
@@ -1334,7 +1515,79 @@ index 00000000..3dcd4b0d
 +                view.evaluateJavascript(DuolingoLessonActivity.CORRECT_FEEDBACK_MONITOR, null);
 +            }
 +        });
-+        addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
++        // Keep the authenticated page alive behind Android controls. The
++        // overlay never replaces its DOM or its grading/correctness monitor.
++        FrameLayout answers = new FrameLayout(context);
++        answers.addView(browser, new FrameLayout.LayoutParams(-1, -1));
++
++        nativeScroll = new ScrollView(context);
++        nativeScroll.setFillViewport(true);
++        nativeScroll.setVerticalScrollBarEnabled(true);
++        nativeScroll.setBackgroundColor(Color.rgb(19, 33, 51));
++        nativeScroll.setVisibility(View.GONE);
++        LinearLayout nativeStack = new LinearLayout(context);
++        nativeStack.setOrientation(VERTICAL);
++        nativeStack.setPadding(dp(5), dp(3), dp(5), dp(3));
++
++        nativePrompt = new TextView(context);
++        nativePrompt.setTextColor(Color.rgb(239, 226, 199));
++        nativePrompt.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
++        nativePrompt.setTextSize(12);
++        nativePrompt.setPadding(dp(4), dp(2), dp(4), dp(4));
++        nativePrompt.setMaxLines(3);
++        nativePrompt.setOnClickListener(v -> nativePrompt.setMaxLines(
++                nativePrompt.getMaxLines() == 3 ? 8 : 3));
++        nativeStack.addView(nativePrompt);
++
++        nativeInput = new EditText(context);
++        nativeInput.setTextColor(Color.rgb(255, 241, 211));
++        nativeInput.setHintTextColor(Color.rgb(158, 179, 204));
++        nativeInput.setHint("Enter your answer");
++        nativeInput.setTextSize(13);
++        nativeInput.setSingleLine(true);
++        nativeInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
++        nativeInput.setSelectAllOnFocus(false);
++        nativeInput.setPadding(dp(6), 0, dp(6), 0);
++        GradientDrawable answerFrame = new GradientDrawable();
++        answerFrame.setColor(Color.rgb(13, 25, 39));
++        answerFrame.setCornerRadius(dp(2));
++        answerFrame.setStroke(dp(2), Color.rgb(204, 171, 112));
++        nativeInput.setBackground(answerFrame);
++        nativeInput.setOnEditorActionListener((v, actionId, event) -> {
++            if (actionId == EditorInfo.IME_ACTION_DONE) {
++                browser.evaluateJavascript("window.__andorsCombatUiV11&&" +
++                        "window.__andorsCombatUiV11.activateAction()", null);
++                return true;
++            }
++            return false;
++        });
++        nativeInput.addTextChangedListener(new TextWatcher() {
++            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
++            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
++                if (!updatingInput && "typing".equals(nativeMode) && !forceWeb) {
++                    browser.evaluateJavascript("window.__andorsCombatUiV11&&" +
++                            "window.__andorsCombatUiV11.nativeSetText(" +
++                            JSONObject.quote(s.toString()) + ")", null);
++                }
++            }
++            @Override public void afterTextChanged(Editable s) { }
++        });
++        nativeStack.addView(nativeInput, new LinearLayout.LayoutParams(-1, dp(30)));
++
++        nativeSelected = new TextView(context);
++        nativeSelected.setTextColor(Color.rgb(188, 208, 230));
++        nativeSelected.setTypeface(Typeface.MONOSPACE);
++        nativeSelected.setTextSize(11);
++        nativeSelected.setPadding(dp(4), dp(2), dp(4), dp(2));
++        nativeSelected.setVisibility(View.GONE);
++        nativeStack.addView(nativeSelected);
++
++        nativeOptions = new LinearLayout(context);
++        nativeOptions.setOrientation(VERTICAL);
++        nativeStack.addView(nativeOptions);
++        nativeScroll.addView(nativeStack);
++        answers.addView(nativeScroll, new FrameLayout.LayoutParams(-1, -1));
++        addView(answers, new LinearLayout.LayoutParams(-1, 0, 1));
 +        updateCounter();
 +    }
 +
@@ -1372,6 +1625,96 @@ index 00000000..3dcd4b0d
 +
 +    private void updateCounter() {
 +        counter.setText("DUO " + totalCorrectCount + " ✓ · " + lastFeedback);
++    }
++
++    private void updateNativeUi(JSONObject state) {
++        String nextMode = state == null ? "web" : state.optString("mode", "web");
++        if (!inExercise) nextMode = "web";
++        String prompt = state == null ? "" : state.optString("prompt", "");
++        String nextKey = nextMode + "|" + prompt;
++        boolean changedExercise = !nextKey.equals(nativeExerciseKey);
++        if (changedExercise) {
++            nativeExerciseKey = nextKey;
++            nativeOptionsSignature = "";
++            forceWeb = false;
++            nativeInput.clearFocus();
++        }
++        nativeMode = nextMode;
++        nativePrompt.setText(prompt);
++        nativePrompt.setVisibility(prompt.isEmpty() ? View.GONE : View.VISIBLE);
++
++        boolean typing = "typing".equals(nextMode);
++        nativeInput.setVisibility(typing ? View.VISIBLE : View.GONE);
++        nativeOptions.setVisibility(typing ? View.GONE : View.VISIBLE);
++        if (typing) {
++            String answer = state.optString("input", "");
++            if ((changedExercise || !nativeInput.hasFocus()) &&
++                    !nativeInput.getText().toString().equals(answer)) {
++                updatingInput = true;
++                nativeInput.setText(answer);
++                nativeInput.setSelection(nativeInput.length());
++                updatingInput = false;
++            }
++            nativeSelected.setVisibility(View.GONE);
++        } else {
++            JSONArray options = state == null ? null : state.optJSONArray("options");
++            String signature = options == null ? "" : options.toString();
++            if (!signature.equals(nativeOptionsSignature)) {
++                nativeOptionsSignature = signature;
++                rebuildNativeOptions(options);
++            }
++            String selected = state == null ? "" : state.optString("selected", "");
++            boolean showSelected = "wordbank".equals(nextMode) && !selected.isEmpty();
++            nativeSelected.setText(showSelected ? "ANSWER: " + selected : "");
++            nativeSelected.setVisibility(showSelected ? View.VISIBLE : View.GONE);
++        }
++        showNativeOrWeb();
++    }
++
++    private void rebuildNativeOptions(JSONArray options) {
++        nativeOptions.removeAllViews();
++        if (options == null) return;
++        for (int i = 0; i < options.length(); i += 2) {
++            LinearLayout row = new LinearLayout(getContext());
++            row.setOrientation(HORIZONTAL);
++            for (int j = i; j < Math.min(i + 2, options.length()); j++) {
++                JSONObject option = options.optJSONObject(j);
++                if (option == null) continue;
++                int index = option.optInt("id", j);
++                Button button = createAudioButton(getContext(), option.optString("text", ""));
++                button.setTextSize(11);
++                button.setMaxLines(2);
++                button.setGravity(Gravity.CENTER);
++                button.setPadding(dp(3), 0, dp(3), 0);
++                button.setEnabled(!option.optBoolean("disabled"));
++                if (option.optBoolean("selected")) {
++                    GradientDrawable selectedFrame = new GradientDrawable(
++                            GradientDrawable.Orientation.TOP_BOTTOM,
++                            new int[]{Color.rgb(88, 120, 158), Color.rgb(46, 80, 112)});
++                    selectedFrame.setStroke(dp(2), Color.rgb(234, 205, 141));
++                    selectedFrame.setCornerRadius(dp(2));
++                    button.setBackground(selectedFrame);
++                }
++                button.setOnClickListener(v -> browser.evaluateJavascript(
++                        "window.__andorsCombatUiV11&&window.__andorsCombatUiV11.nativeTap(" +
++                                index + ")", null));
++                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
++                        0, dp(31), 1);
++                params.setMargins(dp(2), dp(1), dp(2), dp(1));
++                row.addView(button, params);
++            }
++            nativeOptions.addView(row, new LinearLayout.LayoutParams(-1, -2));
++        }
++    }
++
++    private void showNativeOrWeb() {
++        boolean nativeShown = !"web".equals(nativeMode) && !forceWeb;
++        nativeScroll.setVisibility(nativeShown ? View.VISIBLE : View.GONE);
++        // Alpha preserves the WebView's viewport, JS events and feedback
++        // layout; GONE or a zero-height WebView could break correct detection.
++        browser.setAlpha(nativeShown ? 0f : 1f);
++        webToggle.setVisibility("web".equals(nativeMode) ? View.GONE : View.VISIBLE);
++        webToggle.setText(forceWeb ? "Game" : "Web");
 +    }
 +
 +    private Button createAudioButton(Context context, String label) {
@@ -1953,10 +2296,10 @@ HcmV?d00001
 
 diff --git a/AndorsTrail/tools/test_duolingo_combat_skin.js b/AndorsTrail/tools/test_duolingo_combat_skin.js
 new file mode 100644
-index 00000000..e6988254
+index 00000000..9b41a941
 --- /dev/null
 +++ b/AndorsTrail/tools/test_duolingo_combat_skin.js
-@@ -0,0 +1,286 @@
+@@ -0,0 +1,364 @@
 +/* Minimal offline DOM fixtures for the injected combat-skin JavaScript.
 + * These checks exercise every role classifier without relying on a live
 + * account, Duolingo network responses or private web APIs. */
@@ -1976,8 +2319,14 @@ index 00000000..e6988254
 +
 +function element(tag, attributes = {}, text = "", top = 30) {
 +  return {
-+    tag, attributes: { ...attributes }, innerText: text, textContent: text,
++    tag, tagName: tag.toUpperCase(), attributes: { ...attributes },
++    innerText: text, textContent: text,
 +    parentElement: null, children: [], isConnected: true,
++    dispatchEvent(event) {
++      if (!this.events) this.events = [];
++      this.events.push(event.type);
++      return true;
++    },
 +    getAttribute(name) { return this.attributes[name] ?? null; },
 +    setAttribute(name, value) { this.attributes[name] = value; },
 +    removeAttribute(name) { delete this.attributes[name]; },
@@ -2035,6 +2384,10 @@ index 00000000..e6988254
 +      n.getAttribute("data-test") === "challenge");
 +    if (selector === '[data-andors-ui="audio"]') return nodes.filter(n =>
 +      n.getAttribute("data-andors-ui") === "audio");
++    if (/^\[data-andors-ui="(?:choice|word|match)"\]$/.test(selector)) {
++      const role = selector.match(/="(.*?)"/)[1];
++      return nodes.filter(n => n.getAttribute("data-andors-ui") === role);
++    }
 +    if (selector.includes('[data-test="challenge-translate-prompt"]') &&
 +        selector.includes('blockquote')) return nodes.filter(n =>
 +      ["challenge-translate-prompt", "challenge-prompt", "challenge-sentence",
@@ -2064,7 +2417,8 @@ index 00000000..e6988254
 +    document: {
 +      body: element("body"), documentElement: root,
 +      querySelectorAll: queryAll,
-+      querySelector(selector) { return queryAll(selector)[0] ?? null; }
++      querySelector(selector) { return queryAll(selector)[0] ?? null; },
++      createTextNode(text) { return { textContent: text }; }
 +    },
 +    location: { pathname: url },
 +    MutationObserver: class {
@@ -2077,12 +2431,25 @@ index 00000000..e6988254
 +      setInterval() { },
 +      addEventListener() { }
 +    },
-+    Map
++    Map,
++    Event: class { constructor(type) { this.type = type; } },
++    HTMLInputElement: class {
++      set value(next) {
++        Object.defineProperty(this, "value", { value: next, writable: true,
++          configurable: true });
++      }
++    },
++    HTMLTextAreaElement: class {
++      set value(next) {
++        Object.defineProperty(this, "value", { value: next, writable: true,
++          configurable: true });
++      }
++    }
 +  };
 +  vm.runInNewContext(source, context);
 +  vm.runInNewContext(source, context); // Must be idempotent on SPA reinjection.
 +  assert.equal(observerCount, 1);
-+  return { root, classes, nodes, api: context.window.__andorsCombatUiV10 };
++  return { root, classes, nodes, api: context.window.__andorsCombatUiV11 };
 +}
 +
 +const home = runFixture("/learn", [
@@ -2205,6 +2572,57 @@ index 00000000..e6988254
 +  "Matching answer sounds must remain inside their original answer tiles");
 +assert.equal(matchAudio.getAttribute("data-andors-mirror"), null);
 +
++// The sentence observed in the user's recording has a blank embedded in the
++// Vietnamese text. The read-only DOM reconstruction must include that blank
++// so native controls never show just "Type the missing word" as the question.
++const missingWord = element("input", { "data-test": "challenge-text-input" });
++missingWord.value = "";
++const sentenceHolder = element("span");
++sentenceHolder.cloneNode = () => {
++  const clone = {
++    textContent: "Cảnh sát biết bạn ở đâu.",
++    querySelectorAll() { return [{ replaceWith(blank) {
++      clone.textContent = "Cảnh sát biết bạn" + blank.textContent + "ở đâu.";
++    } }]; }
++  };
++  return clone;
++};
++missingWord.parentElement = sentenceHolder;
++const nativeTyping = runFixture("/lesson/missing-word", [
++  element("div", { "data-test": "challenge-header" }),
++  element("h2", {}, "Type the missing word"), missingWord,
++  element("button", { "data-test": "challenge-check-button" }, "Check")
++]);
++const typingSnapshot = nativeTyping.api.nativeState();
++assert.equal(typingSnapshot.mode, "typing");
++assert.equal(typingSnapshot.prompt, "Cảnh sát biết bạn ____ ở đâu.");
++assert.equal(nativeTyping.api.nativeSetText("đang"), true);
++assert.equal(missingWord.value, "đang");
++assert(missingWord.events.includes("input"));
++assert(missingWord.events.includes("change"));
++
++const nativeChoicePrompt = element("div", { "data-test": "challenge-prompt" },
++  "Which word means rat?");
++let nativeChoiceClicks = 0;
++const nativeChoiceButtons = [
++  element("button", { "data-test": "challenge-choice" }, "con chuột"),
++  element("button", { "data-test": "challenge-choice" }, "con mèo")
++];
++nativeChoiceButtons[0].click = () => nativeChoiceClicks++;
++const nativeChoice = runFixture("/lesson/native-choice", [
++  element("div", { "data-test": "challenge-header" }), nativeChoicePrompt,
++  ...nativeChoiceButtons
++]);
++assert.equal(nativeChoice.api.nativeState().mode, "choices");
++assert.equal(nativeChoiceClicks, 0, "Reading choices must not click answers");
++assert.equal(nativeChoice.api.nativeTap(0), true);
++assert.equal(nativeChoiceClicks, 1, "Native taps must forward to the real answer node");
++
++const nativeMatch = match.api.nativeState();
++assert.equal(nativeMatch.mode, "matching");
++assert.equal(nativeMatch.options.length, 4);
++assert.equal(nativeTyping.api.playAudio(0), false);
++
 +let nativeSubmissionCount = 0;
 +const originalCheck = element("button", {}, "Check");
 +originalCheck.click = () => nativeSubmissionCount++;
@@ -2230,9 +2648,12 @@ index 00000000..e6988254
 +assert(css.includes('[data-andors-mirror="audio"]'));
 +assert(panel.includes("enemyHeight * (enlarged ? 2.0f : 1.5f)"));
 +assert(panel.includes("private boolean enlarged = true"));
-+assert(panel.includes("window.__andorsCombatUiV10.activateAction()"));
-+assert(panel.includes("window.__andorsCombatUiV10.questionText()"));
-+assert(panel.includes("window.__andorsCombatUiV10.playAudio(0)"));
++assert(panel.includes("window.__andorsCombatUiV11.activateAction()"));
++assert(panel.includes("window.__andorsCombatUiV11.questionText()"));
++assert(panel.includes("window.__andorsCombatUiV11.playAudio(0)"));
++assert(panel.includes("window.__andorsCombatUiV11.nativeSetText("));
++assert(panel.includes("window.__andorsCombatUiV11.nativeTap("));
++assert(panel.includes("browser.setAlpha(nativeShown ? 0f : 1f)"));
 +assert(panel.includes("window.__andorsDuoCompact=true"));
 +assert(monitor.includes("window.__andorsDuoCompact?laidOut:shown(b)"),
 +  "The compact layout must not break success detection when Continue scrolls");
@@ -2242,4 +2663,4 @@ index 00000000..e6988254
 +  source.indexOf("function schedule()"));
 +assert(!/\.click\s*\(/.test(refreshCode),
 +  "Refreshing the skin must never submit an answer automatically");
-+console.log("Duolingo combat skin: native question/audio, safe matching, words, choices, typing, check, and reinjection passed.");
++console.log("Duolingo combat: native blanks, text events, choices, matching, audio, check, fallback and reinjection passed.");
