@@ -46,15 +46,17 @@ index 1e190966..73c2d8e5 100644
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
 new file mode 100644
-index 00000000..51712f28
+index 00000000..dcc7a6cf
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,193 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
 +import android.graphics.Color;
 +import android.os.Bundle;
++import android.os.Handler;
++import android.os.Looper;
 +import android.view.Gravity;
 +import android.view.View;
 +import android.webkit.CookieManager;
@@ -72,13 +74,44 @@ index 00000000..51712f28
 + * First embedded Duolingo lesson prototype. All exercises remain hosted and
 + * scored by Duolingo; the app does not forge XP or mark lessons complete.
 + *
-+ * UI selectors and per-answer events have intentionally not been wired to
-+ * combat until a real session proves WebView login and lesson compatibility.
++ * The answer counter is diagnostic only, pending real-device validation.
++ * JavaScript results are read by the host using evaluateJavascript rather
++ * than exposing an Android JavaScript interface to untrusted web content.
 + */
 +public final class DuolingoLessonActivity extends AndorsTrailBaseActivity {
 +    private static final String START_URL = "https://www.duolingo.com/learn";
 +    private WebView lesson;
 +    private TextView status;
++    private final Handler handler = new Handler(Looper.getMainLooper());
++    private boolean observing;
++    private long detectedCorrect;
++    private long lastPageCount;
++    private int pageGeneration;
++    private final Runnable readAnswerCounter = new Runnable() {
++        @Override public void run() {
++            if (!observing || lesson == null) return;
++            String url = lesson.getUrl();
++            if (url != null && isDuolingoUrl(url)) {
++                final int generation = pageGeneration;
++                lesson.evaluateJavascript("window.__andorsDuoCorrectCount || 0", value -> {
++                    if (generation != pageGeneration || !observing) return;
++                    try {
++                        long pageCount = Long.parseLong(value);
++                        if (pageCount < lastPageCount) lastPageCount = pageCount;
++                        if (pageCount > lastPageCount) {
++                            // Count transitions, never duplicate a persistent feedback panel.
++                            detectedCorrect += pageCount - lastPageCount;
++                            lastPageCount = pageCount;
++                            showCounter();
++                        }
++                    } catch (NumberFormatException ignored) {
++                        // Page navigation can briefly interrupt evaluation.
++                    }
++                });
++            }
++            handler.postDelayed(this, 200);
++        }
++    };
 +
 +    @SuppressLint("SetJavaScriptEnabled")
 +    @Override public void onCreate(Bundle savedInstanceState) {
@@ -122,10 +155,12 @@ index 00000000..51712f28
 +            }
 +
 +            @Override public void onPageFinished(WebView view, String url) {
-+                if (url.startsWith("https://www.duolingo.com/") ||
-+                        url.startsWith("https://duolingo.com/")) {
++                if (isDuolingoUrl(url)) {
++                    pageGeneration++;
++                    lastPageCount = 0;
 +                    view.evaluateJavascript(STYLES, null);
-+                    status.setText("Duolingo · Live lesson");
++                    view.evaluateJavascript(CORRECT_FEEDBACK_MONITOR, null);
++                    showCounter();
 +                }
 +            }
 +        });
@@ -144,7 +179,53 @@ index 00000000..51712f28
 +            "document.head.appendChild(s);" +
 +            "})();";
 +
++    // Confirmed by the user: a green 'Correct!' panel appears after an answer.
++    // We deliberately require an exact visible feedback label, rather than
++    // matching text anywhere in a sentence or automating any Duolingo action.
++    // Other locales/feedback variants can be added after device testing.
++    private static final String CORRECT_FEEDBACK_MONITOR = "(function(){" +
++            "if(window.__andorsDuoMonitor)return;" +
++            "window.__andorsDuoMonitor=true;window.__andorsDuoCorrectCount=0;" +
++            "var armed=false,visible=false,scheduled=false;" +
++            "function hasFeedback(){" +
++            "var nodes=document.querySelectorAll('h1,h2,h3,h4,div,span,[role=alert]');" +
++            "for(var i=0;i<nodes.length;i++){var e=nodes[i];" +
++            "if(e.children.length && e.querySelector('h1,h2,h3,h4,div,span'))continue;" +
++            "if((e.textContent||'').trim().toLowerCase()!=='correct!')continue;" +
++            "var s=getComputedStyle(e);if(s.display==='none'||s.visibility==='hidden')continue;" +
++            "if(!e.getClientRects().length)continue;return true;}return false;}" +
++            "function scan(){scheduled=false;var found=hasFeedback();" +
++            "if(!found){armed=true;visible=false;}" +
++            "else if(armed&&!visible){visible=true;window.__andorsDuoCorrectCount++;}}" +
++            "new MutationObserver(function(){if(!scheduled){scheduled=true;requestAnimationFrame(scan);}})" +
++            ".observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});" +
++            "scan();" +
++            "})();";
++
++    private static boolean isDuolingoUrl(String url) {
++        return url != null && (url.startsWith("https://www.duolingo.com/")
++                || url.startsWith("https://duolingo.com/"));
++    }
++
++    private void showCounter() {
++        status.setText("Duolingo · Correct detected: " + detectedCorrect);
++    }
++
 +    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
++
++    @Override protected void onResume() {
++        super.onResume();
++        if (!observing) {
++            observing = true;
++            handler.post(readAnswerCounter);
++        }
++    }
++
++    @Override protected void onPause() {
++        observing = false;
++        handler.removeCallbacks(readAnswerCounter);
++        super.onPause();
++    }
 +
 +    @Override public void onBackPressed() {
 +        if (lesson != null && lesson.canGoBack()) lesson.goBack();
@@ -152,6 +233,8 @@ index 00000000..51712f28
 +    }
 +
 +    @Override protected void onDestroy() {
++        observing = false;
++        handler.removeCallbacks(readAnswerCounter);
 +        if (lesson != null) {
 +            lesson.stopLoading();
 +            lesson.destroy();
