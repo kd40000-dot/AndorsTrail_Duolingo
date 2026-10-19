@@ -1,0 +1,42 @@
+name: Build Duolingo test APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout integration
+        uses: actions/checkout@v4
+      - name: Install JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Clone official Andor's Trail
+        run: |
+          git clone --filter=blob:none https://github.com/AndorsTrailRelease/andors-trail.git upstream
+          git -C upstream checkout 0dfa1f63ea6d944df2c6d34e641000c09d3e917e
+      - name: Apply Duolingo integration
+        run: git -C upstream apply --check "$GITHUB_WORKSPACE/patches/embedded-duolingo.patch" && git -C upstream apply "$GITHUB_WORKSPACE/patches/embedded-duolingo.patch"
+      - name: Build debug APK
+        working-directory: upstream/AndorsTrail
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+      - name: Upload test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AndorsTrail-Duolingo-test
+          path: upstream/AndorsTrail/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
