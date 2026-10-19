@@ -20,8 +20,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
       - name: Clone official Andor's Trail
         run: |
           git clone --filter=blob:none https://github.com/AndorsTrailRelease/andors-trail.git upstream
