@@ -32,9 +32,20 @@ index 25463ca0..853f5e56 100644
          beta {
              manifestPlaceholders icon_name: 'icon_beta', fileproviderPath: 'AndorsTrail.beta2'
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..73c2d8e5 100644
+index 1e190966..fe2620ff 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
+@@ -2,8 +2,8 @@
+ 
+ <manifest 
+ 	xmlns:android="http://schemas.android.com/apk/res/android" 
+-	android:versionCode="89"
+-	android:versionName="0.8.18"
++	android:versionCode="90"
++	android:versionName="0.8.18-duo6"
+ 	android:installLocation="auto"
+ 	>
+ 
 @@ -18,6 +18,7 @@
  	<!-- Storage access permissions - keep for Android 12 and below -->
  	<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
@@ -65,7 +76,7 @@ index 1e190966..73c2d8e5 100644
  			android:exported="true"
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
-index a0148fab..6bd24e91 100644
+index a0148fab..5236b99c 100644
 --- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/activity/MainActivity.java
 @@ -33,6 +33,7 @@ import com.gpl.rpg.AndorsTrail.controller.listeners.CombatActionListener;
@@ -100,6 +111,22 @@ index a0148fab..6bd24e91 100644
  			// It's possible the pause() quicksave was deferred because the map was in transition.  If
  			// so, we do it now so the new map is saved.
  			saveDeferredQuicksaveIfNeeded();
+@@ -229,6 +233,15 @@ public final class MainActivity
+ 		}
+ 	}
+ 
++	@Override
++	public void onWindowFocusChanged(boolean hasFocus) {
++		super.onWindowFocusChanged(hasFocus);
++		if (hasFocus && combatview != null) {
++			// Reassert the overlay after the game view has been fully laid out.
++			combatview.post(combatview::ensureDuolingoPanelVisible);
++		}
++	}
++
+ 	// Close toolbox by toolbox toggle button.  Needed here since MainView loses focus when toolbox opens.
+ 	@Override
+ 	public boolean dispatchKeyEvent(KeyEvent event) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
 index 8a3a1d67..620784cd 100644
 --- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
@@ -225,10 +252,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..746133ff
+index 00000000..20e174af
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,216 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -390,10 +417,12 @@ index 00000000..746133ff
 +    }
 +
 +    public void showLessons() {
-+        if (active) return;
++        boolean wasActive = active;
 +        active = true;
 +        setVisibility(View.VISIBLE);
 +        applyPanelHeight();
++        bringToFront();
++        if (wasActive) return;
 +        browser.onResume();
 +        if (!started) {
 +            started = true;
@@ -416,7 +445,7 @@ index 00000000..746133ff
 +    }
 +
 +    private void updateCounter() {
-+        counter.setText("Duo combat · " + totalCorrectCount + " correct · " + lastFeedback);
++        counter.setText("Duo combat v6 · " + totalCorrectCount + " correct · " + lastFeedback);
 +    }
 +
 +    private void applyPanelHeight() {
@@ -698,7 +727,7 @@ index 00000000..c157d80e
 +    }
 +}
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
-index 6d934235..43dce726 100644
+index 6d934235..6a35da31 100644
 --- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
 @@ -19,6 +19,7 @@ import com.gpl.rpg.AndorsTrail.AndorsTrailPreferences;
@@ -760,7 +789,7 @@ index 6d934235..43dce726 100644
  	}
 +
 +	private void updateDuolingoButton() {
-+		duolingoToggleButton.setText(duolingoPanel != null && duolingoPanel.isShowingLessons() ? "Hide Duo" : "Duo");
++		duolingoToggleButton.setText(duolingoPanel != null && duolingoPanel.isShowingLessons() ? "Hide Duo v6" : "Duo v6");
 +	}
 +
 +	/** The lesson overlay belongs to the main screen, not the compact combat toolbar. */
