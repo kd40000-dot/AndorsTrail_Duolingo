@@ -1,5 +1,18 @@
+diff --git a/AndorsTrail/app/build.gradle b/AndorsTrail/app/build.gradle
+index 25463ca0..57305403 100644
+--- a/AndorsTrail/app/build.gradle
++++ b/AndorsTrail/app/build.gradle
+@@ -50,7 +50,7 @@ android {
+         }
+         debug {
+             manifestPlaceholders icon_name: 'icon_debug', fileproviderPath: 'AndorsTrail.dev'
+-            applicationIdSuffix = '.dev'
++            applicationIdSuffix = '.duolingo'
+             versionNameSuffix = 'dev'
+             if (hasKeystoreProperties) {
+                 signingConfig signingConfigs.betaKey
 diff --git a/AndorsTrail/app/src/main/AndroidManifest.xml b/AndorsTrail/app/src/main/AndroidManifest.xml
-index 1e190966..9ae73816 100644
+index 1e190966..73c2d8e5 100644
 --- a/AndorsTrail/app/src/main/AndroidManifest.xml
 +++ b/AndorsTrail/app/src/main/AndroidManifest.xml
 @@ -18,6 +18,7 @@
@@ -10,6 +23,15 @@ index 1e190966..9ae73816 100644
  
  	<uses-feature android:name="android.software.leanback" android:required="false"/>
  	<uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+@@ -30,7 +31,7 @@
+ 
+ 	<application
+ 		android:name="com.gpl.rpg.AndorsTrail.AndorsTrailApplication"
+-		android:label="@string/app_name"
++		android:label="@string/duolingo_app_name"
+ 		android:icon="@drawable/${icon_name}"
+ 		android:isGame="true"
+ 		android:banner="@drawable/tv_banner"
 @@ -41,6 +42,11 @@
  		android:hasFragileUserData="true"
  		android:preserveLegacyExternalStorage="true"
@@ -204,3 +226,13 @@ index 1b670f50..d775b9c8 100644
 -</merge>
 \ No newline at end of file
 +</merge>
+diff --git a/AndorsTrail/res/values/duolingo_app_name.xml b/AndorsTrail/res/values/duolingo_app_name.xml
+new file mode 100644
+index 00000000..ecee64f4
+--- /dev/null
++++ b/AndorsTrail/res/values/duolingo_app_name.xml
+@@ -0,0 +1,4 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="duolingo_app_name">Andor\'s Trail Duolingo</string>
++</resources>
