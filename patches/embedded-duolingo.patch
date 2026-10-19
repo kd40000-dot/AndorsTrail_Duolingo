@@ -66,10 +66,10 @@ index 1e190966..73c2d8e5 100644
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
 new file mode 100644
-index 00000000..dcc7a6cf
+index 00000000..9b9d4641
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
-@@ -0,0 +1,193 @@
+@@ -0,0 +1,216 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -87,6 +87,8 @@ index 00000000..dcc7a6cf
 +import android.widget.Button;
 +import android.widget.LinearLayout;
 +import android.widget.TextView;
++import org.json.JSONArray;
++import org.json.JSONException;
 +
 +import com.gpl.rpg.AndorsTrail.activity.AndorsTrailBaseActivity;
 +
@@ -102,6 +104,7 @@ index 00000000..dcc7a6cf
 +    private static final String START_URL = "https://www.duolingo.com/learn";
 +    private WebView lesson;
 +    private TextView status;
++    private TextView diagnostics;
 +    private final Handler handler = new Handler(Looper.getMainLooper());
 +    private boolean observing;
 +    private long detectedCorrect;
@@ -113,18 +116,27 @@ index 00000000..dcc7a6cf
 +            String url = lesson.getUrl();
 +            if (url != null && isDuolingoUrl(url)) {
 +                final int generation = pageGeneration;
-+                lesson.evaluateJavascript("window.__andorsDuoCorrectCount || 0", value -> {
++                lesson.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
++                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
++                        "window.__andorsDuoScans||0]", value -> {
 +                    if (generation != pageGeneration || !observing) return;
 +                    try {
-+                        long pageCount = Long.parseLong(value);
++                        JSONArray snapshot = new JSONArray(value);
++                        long pageCount = snapshot.getLong(0);
++                        boolean active = snapshot.getBoolean(1);
++                        boolean feedbackVisible = snapshot.getBoolean(2);
++                        long scans = snapshot.getLong(3);
 +                        if (pageCount < lastPageCount) lastPageCount = pageCount;
 +                        if (pageCount > lastPageCount) {
 +                            // Count transitions, never duplicate a persistent feedback panel.
 +                            detectedCorrect += pageCount - lastPageCount;
 +                            lastPageCount = pageCount;
-+                            showCounter();
 +                        }
-+                    } catch (NumberFormatException ignored) {
++                        showCounter();
++                        diagnostics.setText((active ? "Observer active" : "Observer inactive")
++                                + " · " + (feedbackVisible ? "Feedback FOUND" : "No feedback")
++                                + " · Checks " + scans);
++                    } catch (JSONException ignored) {
 +                        // Page navigation can briefly interrupt evaluation.
 +                    }
 +                });
@@ -158,6 +170,14 @@ index 00000000..dcc7a6cf
 +        close.setOnClickListener(v -> finish());
 +        toolbar.addView(close);
 +        frame.addView(toolbar);
++
++        diagnostics = new TextView(this);
++        diagnostics.setText("Detector starting…");
++        diagnostics.setTextSize(12);
++        diagnostics.setTextColor(Color.rgb(181, 223, 175));
++        diagnostics.setPadding(dp(12), dp(2), dp(12), dp(4));
++        diagnostics.setBackgroundColor(Color.rgb(35, 44, 48));
++        frame.addView(diagnostics);
 +
 +        lesson = new WebView(this);
 +        lesson.setBackgroundColor(Color.rgb(16, 23, 28));
@@ -199,26 +219,29 @@ index 00000000..dcc7a6cf
 +            "document.head.appendChild(s);" +
 +            "})();";
 +
-+    // Confirmed by the user: a green 'Correct!' panel appears after an answer.
-+    // We deliberately require an exact visible feedback label, rather than
-+    // matching text anywhere in a sentence or automating any Duolingo action.
-+    // Other locales/feedback variants can be added after device testing.
++    // Diagnostic-only detection. Duolingo can split its green feedback label
++    // across nested nodes, which the initial leaf-selector missed. innerText
++    // provides the rendered text with line boundaries. We match complete lines
++    // and expose just booleans/counters, never lesson or answer text.
 +    private static final String CORRECT_FEEDBACK_MONITOR = "(function(){" +
 +            "if(window.__andorsDuoMonitor)return;" +
 +            "window.__andorsDuoMonitor=true;window.__andorsDuoCorrectCount=0;" +
++            "window.__andorsDuoFeedbackVisible=false;window.__andorsDuoScans=0;" +
 +            "var armed=false,visible=false,scheduled=false;" +
 +            "function hasFeedback(){" +
-+            "var nodes=document.querySelectorAll('h1,h2,h3,h4,div,span,[role=alert]');" +
-+            "for(var i=0;i<nodes.length;i++){var e=nodes[i];" +
-+            "if(e.children.length && e.querySelector('h1,h2,h3,h4,div,span'))continue;" +
-+            "if((e.textContent||'').trim().toLowerCase()!=='correct!')continue;" +
-+            "var s=getComputedStyle(e);if(s.display==='none'||s.visibility==='hidden')continue;" +
-+            "if(!e.getClientRects().length)continue;return true;}return false;}" +
++            "var text=(document.body&&document.body.innerText)||'';" +
++            "var lines=text.split(String.fromCharCode(10));" +
++            "for(var i=0;i<lines.length;i++){var line=lines[i].trim().toLowerCase();" +
++            "if(line==='correct!'||line==='great job!'||line==='excellent!'||" +
++            "line==='nicely done!'||line==='¡correcto!'||line==='chính xác!')return true;}" +
++            "return false;}" +
 +            "function scan(){scheduled=false;var found=hasFeedback();" +
++            "window.__andorsDuoScans++;window.__andorsDuoFeedbackVisible=found;" +
 +            "if(!found){armed=true;visible=false;}" +
 +            "else if(armed&&!visible){visible=true;window.__andorsDuoCorrectCount++;}}" +
 +            "new MutationObserver(function(){if(!scheduled){scheduled=true;requestAnimationFrame(scan);}})" +
 +            ".observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true});" +
++            "setInterval(scan,250);" +
 +            "scan();" +
 +            "})();";
 +
