@@ -66,10 +66,10 @@ index 1e190966..73c2d8e5 100644
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
 new file mode 100644
-index 00000000..9b9d4641
+index 00000000..be1a7bf6
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,247 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -90,6 +90,7 @@ index 00000000..9b9d4641
 +import org.json.JSONArray;
 +import org.json.JSONException;
 +
++import com.gpl.rpg.AndorsTrail.AndorsTrailApplication;
 +import com.gpl.rpg.AndorsTrail.activity.AndorsTrailBaseActivity;
 +
 +/**
@@ -118,7 +119,7 @@ index 00000000..9b9d4641
 +                final int generation = pageGeneration;
 +                lesson.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
 +                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
-+                        "window.__andorsDuoScans||0]", value -> {
++                        "window.__andorsDuoScans||0,window.__andorsDuoFeedbackMethod||'none']", value -> {
 +                    if (generation != pageGeneration || !observing) return;
 +                    try {
 +                        JSONArray snapshot = new JSONArray(value);
@@ -126,6 +127,7 @@ index 00000000..9b9d4641
 +                        boolean active = snapshot.getBoolean(1);
 +                        boolean feedbackVisible = snapshot.getBoolean(2);
 +                        long scans = snapshot.getLong(3);
++                        String detection = snapshot.getString(4);
 +                        if (pageCount < lastPageCount) lastPageCount = pageCount;
 +                        if (pageCount > lastPageCount) {
 +                            // Count transitions, never duplicate a persistent feedback panel.
@@ -134,7 +136,7 @@ index 00000000..9b9d4641
 +                        }
 +                        showCounter();
 +                        diagnostics.setText((active ? "Observer active" : "Observer inactive")
-+                                + " · " + (feedbackVisible ? "Feedback FOUND" : "No feedback")
++                                + " · " + (feedbackVisible ? "Success: " + detection : "No success feedback")
 +                                + " · Checks " + scans);
 +                    } catch (JSONException ignored) {
 +                        // Page navigation can briefly interrupt evaluation.
@@ -197,7 +199,6 @@ index 00000000..9b9d4641
 +            @Override public void onPageFinished(WebView view, String url) {
 +                if (isDuolingoUrl(url)) {
 +                    pageGeneration++;
-+                    lastPageCount = 0;
 +                    view.evaluateJavascript(STYLES, null);
 +                    view.evaluateJavascript(CORRECT_FEEDBACK_MONITOR, null);
 +                    showCounter();
@@ -205,7 +206,12 @@ index 00000000..9b9d4641
 +            }
 +        });
 +        frame.addView(lesson, new LinearLayout.LayoutParams(-1, 0, 1));
++        // Android 15 draws app content behind system bars by default. Reuse
++        // the game's insets policy so the toolbar stays below the status bar.
++        AndorsTrailApplication app = AndorsTrailApplication.getApplicationFromActivity(this);
++        app.setUsablePadding(frame);
 +        setContentView(frame);
++        app.setFullscreenMode(this);
 +        lesson.loadUrl(START_URL);
 +    }
 +
@@ -219,23 +225,48 @@ index 00000000..9b9d4641
 +            "document.head.appendChild(s);" +
 +            "})();";
 +
-+    // Diagnostic-only detection. Duolingo can split its green feedback label
-+    // across nested nodes, which the initial leaf-selector missed. innerText
-+    // provides the rendered text with line boundaries. We match complete lines
-+    // and expose just booleans/counters, never lesson or answer text.
++    // Diagnostic-only detection. Duolingo rotates success captions (including
++    // "Nice!" and "Amazing!") and can split them across nested nodes. Detect
++    // recognizable captions or the green feedback heading accompanying the
++    // Continue button. Expose only counters and a detection method; do not
++    // transmit lesson text or answers into Android.
 +    private static final String CORRECT_FEEDBACK_MONITOR = "(function(){" +
 +            "if(window.__andorsDuoMonitor)return;" +
 +            "window.__andorsDuoMonitor=true;window.__andorsDuoCorrectCount=0;" +
 +            "window.__andorsDuoFeedbackVisible=false;window.__andorsDuoScans=0;" +
++            "window.__andorsDuoFeedbackMethod='none';" +
 +            "var armed=false,visible=false,scheduled=false;" +
-+            "function hasFeedback(){" +
-+            "var text=(document.body&&document.body.innerText)||'';" +
-+            "var lines=text.split(String.fromCharCode(10));" +
-+            "for(var i=0;i<lines.length;i++){var line=lines[i].trim().toLowerCase();" +
-+            "if(line==='correct!'||line==='great job!'||line==='excellent!'||" +
-+            "line==='nicely done!'||line==='¡correcto!'||line==='chính xác!')return true;}" +
++            "function shown(node){var box=node.getBoundingClientRect();" +
++            "return box.width>0&&box.height>0&&box.bottom>0&&box.top<innerHeight;}" +
++            "function hasContinue(){" +
++            "var buttons=document.querySelectorAll('button,[role=button]');" +
++            "for(var i=0;i<buttons.length;i++){var b=buttons[i];" +
++            "if(shown(b)&&(b.innerText||'').trim().toLowerCase()==='continue')return true;}" +
 +            "return false;}" +
-+            "function scan(){scheduled=false;var found=hasFeedback();" +
++            "var positive=['correct','nice','amazing','awesome','great','great job'," +
++            "'excellent','nicely done','perfect','fantastic','incredible'," +
++            "'brilliant','wonderful','well done','good job','superb'," +
++            "'you got it','you did it','well played','correcto','chính xác'];" +
++            "function feedbackMethod(){" +
++            "if(!hasContinue())return '';" +
++            "var nodes=document.querySelectorAll('h1,h2,h3,p,span,strong,div');" +
++            "var screenHeight=innerHeight||document.documentElement.clientHeight;" +
++            "var checked=0;" +
++            "for(var j=nodes.length-1;j>=0&&checked<1000;j--){var el=nodes[j];" +
++            "if(el.childElementCount)continue;" +
++            "var box=el.getBoundingClientRect();" +
++            "if(box.top<screenHeight*.72||box.bottom>screenHeight||!shown(el))continue;" +
++            "var label=(el.innerText||'').trim();" +
++            "if(label.length<2||label.length>70)continue;checked++;" +
++            "var line=label.toLowerCase().replace(/^[!¡. ]+|[!?. ]+$/g,'');" +
++            "if(positive.indexOf(line)!==-1)return 'caption';" +
++            "var color=getComputedStyle(el).color;" +
++            "var rgb=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(color);" +
++            "if(rgb&&(+rgb[2])>110&&(+rgb[2])>(+rgb[1])+25&&" +
++            "(+rgb[2])>(+rgb[3])+25)return 'green panel';}" +
++            "return '';}" +
++            "function scan(){scheduled=false;var method=feedbackMethod();" +
++            "var found=!!method;window.__andorsDuoFeedbackMethod=method||'none';" +
 +            "window.__andorsDuoScans++;window.__andorsDuoFeedbackVisible=found;" +
 +            "if(!found){armed=true;visible=false;}" +
 +            "else if(armed&&!visible){visible=true;window.__andorsDuoCorrectCount++;}}" +
