@@ -64,12 +64,355 @@ index 1e190966..73c2d8e5 100644
  		<activity
  			android:exported="true"
  		    android:name="com.gpl.rpg.AndorsTrail.activity.StartScreenActivity"
+diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
+index 8a3a1d67..620784cd 100644
+--- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
++++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/controller/CombatController.java
+@@ -4,6 +4,7 @@ import java.util.ArrayList;
+ 
+ import com.gpl.rpg.AndorsTrail.util.Format;
+ import android.os.Handler;
++import android.os.Looper;
+ import android.os.Message;
+ 
+ import com.gpl.rpg.AndorsTrail.AndorsTrailPreferences;
+@@ -40,11 +41,65 @@ public final class CombatController implements VisualEffectCompletedCallback {
+ 	private final ArrayList<Loot> killedMonsterBags = new ArrayList<Loot>();
+ 	private int totalExpThisFight = 0;
+ 
++	// Each verified Duolingo exercise queues one normal player attack.
++	// The queue survives animation/monster turns but never survives a fight.
++	private boolean duolingoCombatEnabled = false;
++	private boolean duolingoAttackInProgress = false;
++	private int duolingoPendingAttacks = 0;
++	private final Handler duolingoHandler = new Handler(Looper.getMainLooper());
++	private final Runnable duolingoAttackRunner = new Runnable() {
++		@Override public void run() {
++			if (!duolingoCombatEnabled || !world.model.uiSelections.isInCombat) return;
++			if (duolingoPendingAttacks == 0 || duolingoAttackInProgress) return;
++			if (!world.model.uiSelections.isPlayersCombatTurn
++					|| controllers.effectController.isRunningVisualEffect()) {
++				duolingoHandler.postDelayed(this, 100);
++				return;
++			}
++			if (!world.model.player.hasAPs(world.model.player.getAttackCost())) {
++				endPlayerTurn();
++				return;
++			}
++			if (world.model.uiSelections.selectedMonster == null) {
++				Monster target = getAdjacentAggressiveMonster();
++				if (target == null) return;
++				setCombatSelection(target);
++			}
++			duolingoPendingAttacks--;
++			duolingoAttackInProgress = true;
++			executePlayerAttack();
++		}
++	};
++
+ 	public CombatController(ControllerContext controllers, WorldContext world) {
+ 		this.controllers = controllers;
+ 		this.world = world;
+ 	}
+ 
++	public void setDuolingoCombatEnabled(boolean enabled) {
++		duolingoCombatEnabled = enabled;
++		if (enabled) {
++			scheduleDuolingoAttack();
++		} else {
++			duolingoHandler.removeCallbacks(duolingoAttackRunner);
++			duolingoPendingAttacks = 0;
++		}
++	}
++
++	public void onDuolingoCorrectAnswer() {
++		if (!duolingoCombatEnabled || !world.model.uiSelections.isInCombat) return;
++		// Bounded queue protects against a malformed web page flooding the game.
++		if (duolingoPendingAttacks < 1000) duolingoPendingAttacks++;
++		scheduleDuolingoAttack();
++	}
++
++	private void scheduleDuolingoAttack() {
++		duolingoHandler.removeCallbacks(duolingoAttackRunner);
++		if (duolingoCombatEnabled && duolingoPendingAttacks > 0) {
++			duolingoHandler.post(duolingoAttackRunner);
++		}
++	}
++
+ 	public static enum BeginTurnAs {
+ 		player, monsters, continueLastTurn
+ 	}
+@@ -72,6 +127,8 @@ public final class CombatController implements VisualEffectCompletedCallback {
+ 		exitCombat(pickupLootBags, false);
+ 	}
+ 	public void exitCombat(boolean pickupLootBags, boolean canceledCombat) {
++		setDuolingoCombatEnabled(false);
++		duolingoAttackInProgress = false;
+ 		setCombatSelection(null, null);
+ 		world.model.uiSelections.isInCombat = false;
+ 		if (pickupLootBags) {
+@@ -180,6 +237,9 @@ public final class CombatController implements VisualEffectCompletedCallback {
+ 
+ 	public void executeMoveAttack(int dx, int dy) {
+ 		if (!world.model.uiSelections.isPlayersCombatTurn) return;
++		// When Duolingo exercises are visible, attacks come only from verified
++		// correct-answer events. Hide Duo to restore ordinary combat controls.
++		if (duolingoCombatEnabled) return;
+ 
+ 		if (world.model.uiSelections.selectedMonster != null) {
+ 			executePlayerAttack();
+@@ -239,6 +299,17 @@ public final class CombatController implements VisualEffectCompletedCallback {
+ 			selectNextAggressiveMonster();
+ 		}
+ 
++		if (duolingoAttackInProgress) {
++			duolingoAttackInProgress = false;
++			if (!world.model.uiSelections.isInCombat) return;
++			if (canExitCombat()) {
++				exitCombat(true);
++			} else {
++				endPlayerTurn();
++			}
++			return;
++		}
++
+ 		playerActionCompleted();
+ 	}
+ 
+@@ -529,6 +600,7 @@ public final class CombatController implements VisualEffectCompletedCallback {
+ 		if (!isFirstRound) controllers.gameRoundController.onNewPlayerRound();
+ 		world.model.uiSelections.isPlayersCombatTurn = true;
+ 		combatTurnListeners.onNewPlayerTurn();
++		scheduleDuolingoAttack();
+ 	}
+ 
+ 	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
+diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
+new file mode 100644
+index 00000000..eae3aaf9
+--- /dev/null
++++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
+@@ -0,0 +1,214 @@
++package com.gpl.rpg.AndorsTrail.duolingo;
++
++import android.annotation.SuppressLint;
++import android.content.Context;
++import android.graphics.Color;
++import android.os.Handler;
++import android.os.Looper;
++import android.util.AttributeSet;
++import android.view.Gravity;
++import android.view.View;
++import android.webkit.CookieManager;
++import android.webkit.WebChromeClient;
++import android.webkit.WebResourceRequest;
++import android.webkit.WebView;
++import android.webkit.WebViewClient;
++import android.widget.Button;
++import android.widget.LinearLayout;
++import android.widget.RelativeLayout;
++import android.widget.TextView;
++
++import org.json.JSONArray;
++import org.json.JSONException;
++
++/**
++ * Live Duolingo exercises inside the game's combat UI. The WebView stays
++ * attached to the battle view rather than launching a separate Activity.
++ * Duolingo itself remains responsible for verifying answers and recording
++ * XP, lessons and streaks; only success-count deltas enter combat logic.
++ */
++public final class DuolingoCombatPanel extends LinearLayout {
++    public interface CorrectAnswerListener {
++        void onCorrectAnswer();
++    }
++
++    private static final String START_URL = "https://www.duolingo.com/learn";
++    private static final String COMBAT_STYLES = "(function(){" +
++            "if(document.getElementById('andors-duo-combat-theme'))return;" +
++            "var s=document.createElement('style');s.id='andors-duo-combat-theme';" +
++            "s.textContent=':root{color-scheme:dark!important;}' +" +
++            "'html,body{margin:0!important;background:#172027!important;}' +" +
++            "'button{border-radius:7px!important;}' +" +
++            // Hide peripheral site chrome, never questions, answers, audio,
++            // matching tiles, progress controls or the feedback/Continue bar.
++            "'[data-test=sidebar],[data-test=topbar]{display:none!important;}';" +
++            "document.head.appendChild(s);" +
++            "})();";
++
++    private final Handler handler = new Handler(Looper.getMainLooper());
++    private final TextView counter;
++    private final Button expand;
++    private final WebView browser;
++    private CorrectAnswerListener correctListener;
++    private boolean active;
++    private boolean started;
++    private boolean enlarged;
++    private long lastDocumentCount;
++    private long totalCorrectCount;
++    private int documentGeneration;
++    private String lastFeedback = "Waiting for lesson";
++
++    private final Runnable readCounter = new Runnable() {
++        @Override public void run() {
++            if (!active) return;
++            String url = browser.getUrl();
++            if (DuolingoLessonActivity.isDuolingoUrl(url)) {
++                final int generation = documentGeneration;
++                browser.evaluateJavascript("[window.__andorsDuoCorrectCount||0," +
++                        "!!window.__andorsDuoMonitor,!!window.__andorsDuoFeedbackVisible," +
++                        "window.__andorsDuoFeedbackMethod||'none']", result -> {
++                    if (!active || generation != documentGeneration) return;
++                    try {
++                        JSONArray state = new JSONArray(result);
++                        long newCount = state.getLong(0);
++                        if (newCount < lastDocumentCount) {
++                            // Hard navigation creates a new JavaScript document.
++                            lastDocumentCount = newCount;
++                        }
++                        if (newCount > lastDocumentCount) {
++                            long delta = newCount - lastDocumentCount;
++                            lastDocumentCount = newCount;
++                            totalCorrectCount += delta;
++                            for (long i = 0; i < delta; i++) {
++                                if (correctListener != null) correctListener.onCorrectAnswer();
++                            }
++                        }
++                        boolean monitor = state.getBoolean(1);
++                        boolean success = state.getBoolean(2);
++                        lastFeedback = !monitor ? "Connecting detector"
++                                : success ? "Correct · " + state.getString(3)
++                                : "Ready";
++                        updateCounter();
++                    } catch (JSONException ignored) {
++                        // Navigations can transiently interrupt JavaScript evaluation.
++                    }
++                });
++            }
++            handler.postDelayed(this, 200);
++        }
++    };
++
++    @SuppressLint("SetJavaScriptEnabled")
++    public DuolingoCombatPanel(Context context, AttributeSet attributes) {
++        super(context, attributes);
++        setOrientation(VERTICAL);
++        setBackgroundColor(Color.rgb(25, 33, 36));
++
++        LinearLayout header = new LinearLayout(context);
++        header.setOrientation(HORIZONTAL);
++        header.setGravity(Gravity.CENTER_VERTICAL);
++        header.setPadding(dp(8), dp(2), dp(8), dp(2));
++        header.setBackgroundColor(Color.rgb(41, 45, 41));
++
++        counter = new TextView(context);
++        counter.setTextColor(Color.rgb(229, 216, 189));
++        counter.setTextSize(13);
++        counter.setGravity(Gravity.CENTER_VERTICAL);
++        header.addView(counter, new LinearLayout.LayoutParams(0, dp(42), 1));
++
++        expand = new Button(context);
++        expand.setText("Expand");
++        expand.setTextSize(12);
++        expand.setMinHeight(0);
++        expand.setOnClickListener(v -> {
++            enlarged = !enlarged;
++            applyPanelHeight();
++        });
++        header.addView(expand);
++        addView(header);
++
++        browser = new WebView(context);
++        browser.setBackgroundColor(Color.rgb(23, 32, 39));
++        browser.getSettings().setJavaScriptEnabled(true);
++        browser.getSettings().setDomStorageEnabled(true);
++        browser.getSettings().setMediaPlaybackRequiresUserGesture(false);
++        CookieManager.getInstance().setAcceptCookie(true);
++        CookieManager.getInstance().setAcceptThirdPartyCookies(browser, true);
++        browser.setWebChromeClient(new WebChromeClient());
++        browser.setWebViewClient(new WebViewClient() {
++            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
++                String host = request.getUrl().getHost();
++                return host == null || !(host.equals("duolingo.com")
++                        || host.endsWith(".duolingo.com"));
++            }
++
++            @Override public void onPageFinished(WebView view, String url) {
++                if (!DuolingoLessonActivity.isDuolingoUrl(url)) return;
++                documentGeneration++;
++                view.evaluateJavascript(DuolingoLessonActivity.STYLES, null);
++                view.evaluateJavascript(COMBAT_STYLES, null);
++                view.evaluateJavascript(DuolingoLessonActivity.CORRECT_FEEDBACK_MONITOR, null);
++            }
++        });
++        addView(browser, new LinearLayout.LayoutParams(-1, 0, 1));
++        updateCounter();
++    }
++
++    public void setCorrectAnswerListener(CorrectAnswerListener listener) {
++        correctListener = listener;
++    }
++
++    public void showLessons() {
++        if (active) return;
++        active = true;
++        setVisibility(View.VISIBLE);
++        applyPanelHeight();
++        browser.onResume();
++        if (!started) {
++            started = true;
++            browser.loadUrl(START_URL);
++        }
++        handler.removeCallbacks(readCounter);
++        handler.post(readCounter);
++    }
++
++    public void hideLessons() {
++        if (!active) return;
++        active = false;
++        handler.removeCallbacks(readCounter);
++        browser.onPause();
++        setVisibility(View.GONE);
++    }
++
++    public boolean isShowingLessons() {
++        return active;
++    }
++
++    private void updateCounter() {
++        counter.setText("Duolingo · " + totalCorrectCount + " correct · " + lastFeedback);
++    }
++
++    private void applyPanelHeight() {
++        android.view.ViewGroup.LayoutParams existing = getLayoutParams();
++        if (!(existing instanceof RelativeLayout.LayoutParams)) return;
++        int availableHeight = getResources().getDisplayMetrics().heightPixels;
++        int desired = Math.round(availableHeight * (enlarged ? 0.80f : 0.57f));
++        desired = Math.max(dp(260), desired);
++        if (existing.height != desired) {
++            existing.height = desired;
++            setLayoutParams(existing);
++        }
++        expand.setText(enlarged ? "Compact" : "Expand");
++    }
++
++    private int dp(int size) {
++        return Math.round(size * getResources().getDisplayMetrics().density);
++    }
++
++    @Override protected void onDetachedFromWindow() {
++        hideLessons();
++        browser.stopLoading();
++        browser.destroy();
++        super.onDetachedFromWindow();
++    }
++}
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
 new file mode 100644
-index 00000000..be1a7bf6
+index 00000000..c157d80e
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoLessonActivity.java
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,248 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -217,7 +560,8 @@ index 00000000..be1a7bf6
 +
 +    // Conservative first styling pass: frame the live site with the game's
 +    // dark palette without suppressing sign-in, answer or Continue controls.
-+    private static final String STYLES = "(function(){" +
++    // Shared with the embedded combat panel while retaining this diagnostic screen.
++    public static final String STYLES = "(function(){" +
 +            "if(document.getElementById('andors-duo-theme'))return;" +
 +            "var s=document.createElement('style');s.id='andors-duo-theme';" +
 +            "s.textContent='html,body{margin:0!important;}" +
@@ -230,7 +574,7 @@ index 00000000..be1a7bf6
 +    // recognizable captions or the green feedback heading accompanying the
 +    // Continue button. Expose only counters and a detection method; do not
 +    // transmit lesson text or answers into Android.
-+    private static final String CORRECT_FEEDBACK_MONITOR = "(function(){" +
++    public static final String CORRECT_FEEDBACK_MONITOR = "(function(){" +
 +            "if(window.__andorsDuoMonitor)return;" +
 +            "window.__andorsDuoMonitor=true;window.__andorsDuoCorrectCount=0;" +
 +            "window.__andorsDuoFeedbackVisible=false;window.__andorsDuoScans=0;" +
@@ -276,7 +620,7 @@ index 00000000..be1a7bf6
 +            "scan();" +
 +            "})();";
 +
-+    private static boolean isDuolingoUrl(String url) {
++    public static boolean isDuolingoUrl(String url) {
 +        return url != null && (url.startsWith("https://www.duolingo.com/")
 +                || url.startsWith("https://duolingo.com/"));
 +    }
@@ -318,34 +662,81 @@ index 00000000..be1a7bf6
 +    }
 +}
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
-index 6d934235..4578cfdb 100644
+index 6d934235..842ce257 100644
 --- a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/view/CombatView.java
-@@ -2,6 +2,7 @@ package com.gpl.rpg.AndorsTrail.view;
- 
- import android.annotation.SuppressLint;
- import android.content.Context;
-+import android.content.Intent;
- import android.content.res.Resources;
- import android.util.AttributeSet;
- import android.view.View;
-@@ -19,6 +20,7 @@ import com.gpl.rpg.AndorsTrail.AndorsTrailPreferences;
+@@ -19,6 +19,7 @@ import com.gpl.rpg.AndorsTrail.AndorsTrailPreferences;
  import com.gpl.rpg.AndorsTrail.Dialogs;
  import com.gpl.rpg.AndorsTrail.R;
  import com.gpl.rpg.AndorsTrail.activity.MainActivity;
-+import com.gpl.rpg.AndorsTrail.duolingo.DuolingoLessonActivity;
++import com.gpl.rpg.AndorsTrail.duolingo.DuolingoCombatPanel;
  import com.gpl.rpg.AndorsTrail.context.ControllerContext;
  import com.gpl.rpg.AndorsTrail.context.WorldContext;
  import com.gpl.rpg.AndorsTrail.controller.CombatController;
-@@ -85,6 +87,8 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+@@ -36,6 +37,8 @@ import com.gpl.rpg.AndorsTrail.util.Coord;
+ public final class CombatView extends RelativeLayout implements CombatSelectionListener, CombatTurnListener, ActorStatsListener, ActorConditionListener {
+ 	private final RangeBar playerAPBar;
+ 	private final Button attackMoveButton;
++	private final Button duolingoToggleButton;
++	private final DuolingoCombatPanel duolingoPanel;
+ 	private final Button endTurnButton;
+ 	private final Button fleeButton;
+ 	private final ImageButton monsterInfo;
+@@ -85,6 +88,19 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
  			MainView mv = ((MainActivity) getContext()).getMainView();
  			mv.post(mv::requestFocus);
  		});
-+		findViewById(R.id.combatview_duolingo).setOnClickListener(v ->
-+				context.startActivity(new Intent(context, DuolingoLessonActivity.class)));
++		duolingoPanel = findViewById(R.id.combatview_duolingo_panel);
++		duolingoPanel.setCorrectAnswerListener(c::onDuolingoCorrectAnswer);
++		duolingoToggleButton = findViewById(R.id.combatview_duolingo);
++		duolingoToggleButton.setOnClickListener(v -> {
++			if (duolingoPanel.isShowingLessons()) {
++				duolingoPanel.hideLessons();
++				c.setDuolingoCombatEnabled(false);
++			} else {
++				c.setDuolingoCombatEnabled(true);
++				duolingoPanel.showLessons();
++			}
++			updateDuolingoButton();
++		});
  
  		endTurnButton = findViewById(R.id.combatview_endturn);
  		//Enable marquee if text is too long.
+@@ -131,6 +147,7 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+ 		
+ 		activeConditionsBar = (RelativeLayout) findViewById(R.id.combatview_activeconditions);
+ 		activeConditions = new DisplayActiveActorConditionIcons(controllers, world, context, activeConditionsBar);
++		updateDuolingoButton();
+ 		
+ 		
+ //		monsterBar.setBackgroundColor(res.getColor(color.transparent));
+@@ -172,6 +189,10 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+ 		if (conditionsBarToggled) showConditionsBar();
+ 		else hideConditionsBar();
+ 	}
++
++	private void updateDuolingoButton() {
++		duolingoToggleButton.setText(duolingoPanel.isShowingLessons() ? "Hide Duo" : "Duo");
++	}
+ 	
+ 	private void updateTurnInfo(Monster currentActiveMonster) {
+ 		if (currentActiveMonster != null) {
+@@ -336,10 +357,15 @@ public final class CombatView extends RelativeLayout implements CombatSelectionL
+ 	public void onCombatStarted() {
+ 		show();
+ 		updateTurnInfo(null);
++		controllers.combatController.setDuolingoCombatEnabled(true);
++		duolingoPanel.showLessons();
++		updateDuolingoButton();
+ 	}
+ 
+ 	@Override
+ 	public void onCombatEnded() {
++		duolingoPanel.hideLessons();
++		updateDuolingoButton();
+ 		hide();
+ 	}
+ 
 diff --git a/AndorsTrail/app/src/main/res/values/duolingo_strings.xml b/AndorsTrail/app/src/main/res/values/duolingo_strings.xml
 new file mode 100644
 index 00000000..f0f13944
@@ -357,7 +748,7 @@ index 00000000..f0f13944
 +    <string name="duolingo_detector_description">Experimental Duolingo integration: detects visible correct-answer feedback. Enable only to test the integration; no answer text is stored.</string>
 +</resources>
 diff --git a/AndorsTrail/res/layout/combatview.xml b/AndorsTrail/res/layout/combatview.xml
-index 1b670f50..d775b9c8 100644
+index 1b670f50..76e84a38 100644
 --- a/AndorsTrail/res/layout/combatview.xml
 +++ b/AndorsTrail/res/layout/combatview.xml
 @@ -30,6 +30,15 @@
@@ -370,18 +761,28 @@ index 1b670f50..d775b9c8 100644
 +                android:layout_height="wrap_content"
 +                android:minHeight="0dp"
 +                android:text="Duo"
-+                android:contentDescription="Open Duolingo lesson in combat"
++                android:contentDescription="Show or hide embedded Duolingo exercises"
 +                android:textSize="@dimen/actionbar_text" />
 +
              <com.gpl.rpg.AndorsTrail.view.RangeBar
                  android:id="@+id/combatview_status"
                  android:layout_width="0dp"
-@@ -134,4 +143,4 @@
+@@ -134,4 +143,14 @@
              android:focusable="false"/>
      </RelativeLayout>
  
 -</merge>
 \ No newline at end of file
++    <!-- Real Duolingo exercises in the battle UI. The game remains visible
++         behind the compact quiz panel, as in the Anki combat integration. -->
++    <com.gpl.rpg.AndorsTrail.duolingo.DuolingoCombatPanel
++        android:id="@+id/combatview_duolingo_panel"
++        style="@style/AndorsTrail_Style_StdFrame"
++        android:layout_width="match_parent"
++        android:layout_height="420dp"
++        android:layout_below="@id/combatview_activeconditions_cliparea"
++        android:visibility="gone" />
++
 +</merge>
 diff --git a/AndorsTrail/res/values/duolingo_app_name.xml b/AndorsTrail/res/values/duolingo_app_name.xml
 new file mode 100644
