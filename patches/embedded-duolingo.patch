@@ -943,10 +943,10 @@ index 8a3a1d67..620784cd 100644
  	private static boolean hasCriticalAttack(Actor attacker, Actor target) {
 diff --git a/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
 new file mode 100644
-index 00000000..da2e632f
+index 00000000..42fc145f
 --- /dev/null
 +++ b/AndorsTrail/app/src/main/java/com/gpl/rpg/AndorsTrail/duolingo/DuolingoCombatPanel.java
-@@ -0,0 +1,324 @@
+@@ -0,0 +1,325 @@
 +package com.gpl.rpg.AndorsTrail.duolingo;
 +
 +import android.annotation.SuppressLint;
@@ -1083,6 +1083,8 @@ index 00000000..da2e632f
 +                "(document.head||document.documentElement).appendChild(s);}" +
 +                "s.textContent=" + JSONObject.quote(css) + ";})();";
 +        combatLayoutScript = loadAsset(context, JS_ASSET);
++        // The native Check button captures this final field below.
++        browser = new WebView(context);
 +
 +        LinearLayout header = new LinearLayout(context);
 +        header.setOrientation(HORIZONTAL);
@@ -1148,7 +1150,6 @@ index 00000000..da2e632f
 +        header.addView(expand, new LinearLayout.LayoutParams(dp(26), dp(23)));
 +        addView(header);
 +
-+        browser = new WebView(context);
 +        browser.setBackgroundColor(Color.rgb(23, 32, 39));
 +        // Let players see when the exercise itself needs scrolling.
 +        browser.setVerticalScrollBarEnabled(true);
